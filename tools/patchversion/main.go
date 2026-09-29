@@ -1,3 +1,5 @@
+//go:build windows
+
 // patchversion 将 Windows PE 文件(exe/dll)的 VERSIONINFO 资源替换为
 // RC/goversioninfo 兼容风格(语言 0409, 代码页 04B0)的版本块。
 //
