@@ -1,6 +1,6 @@
 //go:build desktop
 
-// cluster-router 桌面应用(Wails): 原生窗口 + 内嵌 UI,
+// cluster-route 桌面应用(Wails): 原生窗口 + 内嵌 UI,
 // 后端代理服务仍在 127.0.0.1 监听, 供 cc-switch / Claude Code 连接。
 package main
 
@@ -17,7 +17,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"cluster-router/internal/app"
+	"cluster-route/internal/app"
 )
 
 //go:embed all:web/dist

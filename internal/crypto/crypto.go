@@ -16,6 +16,8 @@ import (
 )
 
 // appEntropy 将密文与应用绑定, 防止同机器其他程序调用 DPAPI 直接解密。
+// 注意: 该字符串参与密钥派生(DPAPI 熵 / AES key), 一经发布不可更改,
+// 否则所有已加密落盘的配置将无法解密; 产品改名也不得同步此处。
 var appEntropy = []byte("cluster-router/v1/key-entropy/2026")
 
 // sealed 前缀用于标识加密 blob 的版本与格式。

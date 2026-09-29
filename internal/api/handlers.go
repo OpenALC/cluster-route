@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"cluster-router/internal/archive"
-	"cluster-router/internal/config"
-	"cluster-router/internal/store"
+	"cluster-route/internal/archive"
+	"cluster-route/internal/config"
+	"cluster-route/internal/store"
 )
 
 type handlers struct{ Deps }

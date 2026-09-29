@@ -12,8 +12,8 @@ import (
 	"regexp"
 	"time"
 
-	"cluster-router/internal/config"
-	"cluster-router/internal/store"
+	"cluster-route/internal/config"
+	"cluster-route/internal/store"
 )
 
 // Snapshot 待归档快照。

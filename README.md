@@ -8,7 +8,7 @@
 |---|---|---|
 | **桌面应用**(推荐) | `wails build` → `build/bin/Cluster Route.exe` | 原生窗口(WebView2)+ 新拟物图标,关窗即退出;构建后执行 `go run ./tools/patchversion -exe "build/bin/Cluster Route.exe"` 修补版本资源(见「品牌与签名」) |
 | **Windows 安装包** | `.\build.ps1 -Installer` → `build/bin/Cluster Route-amd64-installer.exe` | 需要本机 NSIS;以独立 makensis 打包已修补的 exe(不要用 `wails build -nsis`,它会重新构建 exe 并覆盖版本资源修补) |
-| 无头服务 | `go build -o cluster-router-server.exe .` | 控制台常驻,适合服务器/后台部署;同样需 patchversion 修补版本资源 |
+| 无头服务 | `go build -o cluster-route-server.exe .` | 控制台常驻,适合服务器/后台部署;同样需 patchversion 修补版本资源 |
 
 ```
 Claude Code / Codex 等客户端
@@ -49,13 +49,13 @@ go run ./tools/patchversion -exe "build/bin/Cluster Route.exe"
 "./build/bin/Cluster Route.exe"
 
 # 无头服务模式
-go build -o cluster-router-server.exe .
-go run ./tools/patchversion -exe cluster-router-server.exe -original cluster-router-server.exe
-./cluster-router-server.exe        # 可选: -port 8080 -data <dir> -open
+go build -o cluster-route-server.exe .
+go run ./tools/patchversion -exe cluster-route-server.exe -original cluster-route-server.exe
+./cluster-route-server.exe        # 可选: -port 8080 -data <dir> -open
 
 # 仅改后端时可用 go 直接构建(需先构建前端)
 cd web && npm install && npm run build && cd ..
-go build -o cluster-router-server.exe .
+go build -o cluster-route-server.exe .
 ```
 
 数据目录:便携模式锚定 **exe 同目录下的 `data/`**;安装在不可写位置(Program Files)时自动回退到 `%APPDATA%\Cluster Route\data`(Linux 为 `~/.config/Cluster Route/data`)。可用 `-data` 覆盖。首次启动生成 `sk-cr-...` 密钥;**每次启动前自动备份 `config.json` 到 `data/backups/`**(保留最近 10 份)。

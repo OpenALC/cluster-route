@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"cluster-router/internal/archive"
-	"cluster-router/internal/config"
-	"cluster-router/internal/pricing"
-	"cluster-router/internal/proxy"
-	"cluster-router/internal/stats"
-	"cluster-router/internal/store"
+	"cluster-route/internal/archive"
+	"cluster-route/internal/config"
+	"cluster-route/internal/pricing"
+	"cluster-route/internal/proxy"
+	"cluster-route/internal/stats"
+	"cluster-route/internal/store"
 )
 
 // Deps 管理接口依赖集合。

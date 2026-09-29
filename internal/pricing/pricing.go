@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"cluster-router/internal/store"
+	"cluster-route/internal/store"
 )
 
 // Pricer 内存单价表, 落库于 SQLite, 请求路径只读无锁竞争极小。

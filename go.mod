@@ -1,4 +1,4 @@
-module cluster-router
+module cluster-route
 
 go 1.25.0
 

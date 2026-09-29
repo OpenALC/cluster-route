@@ -13,6 +13,9 @@ web/dist/
 # --- Wails 生成的 package.json 校验文件 ---
 web/package.json.md5
 
+# --- Wails 生成的运行时代码(wails build/dev 自动重新生成) ---
+web/wailsjs/
+
 # --- NSIS 打包时才下载的 WebView2 引导程序 ---
 build/windows/installer/tmp/
 

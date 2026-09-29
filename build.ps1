@@ -2,8 +2,8 @@
 #
 # Artifacts:
 #   build/bin/Cluster Route.exe                 desktop app (Wails)
-#   cluster-router-server.exe                   headless service (console)
-#   build/bin/cluster-router-amd64-installer.exe  NSIS installer (-Installer)
+#   cluster-route-server.exe                    headless service (console)
+#   build/bin/Cluster Route-amd64-installer.exe  NSIS installer (-Installer)
 #
 # NOTE on VERSIONINFO:
 #   The RT_VERSION resource generated internally by `wails build` (go-winres)
@@ -49,7 +49,7 @@ Write-Host "makensis = $makensis"
 
 $patchArgs  = @("run", "./tools/patchversion")
 $desktopExe = Join-Path $PSScriptRoot "build\bin\Cluster Route.exe"
-$serverExe  = Join-Path $PSScriptRoot "cluster-router-server.exe"
+$serverExe  = Join-Path $PSScriptRoot "cluster-route-server.exe"
 
 # --- desktop app ------------------------------------------------------------
 Write-Host ""
@@ -69,7 +69,7 @@ if ($LASTEXITCODE -ne 0) { throw "failed to patch desktop version resource" }
 Write-Host "==> [3/4] go build (headless server)" -ForegroundColor Cyan
 & $go @("build", "-o", $serverExe, ".")
 if ($LASTEXITCODE -ne 0) { throw "go build failed" }
-& $go @($patchArgs + @("-exe", $serverExe, "-original", "cluster-router-server.exe"))
+& $go @($patchArgs + @("-exe", $serverExe, "-original", "cluster-route-server.exe"))
 if ($LASTEXITCODE -ne 0) { throw "failed to patch server version resource" }
 
 # --- NSIS installer ---------------------------------------------------------

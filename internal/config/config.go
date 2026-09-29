@@ -1,4 +1,4 @@
-// Package config 定义 cluster-router 的持久化配置(供应商/路由/通道策略)
+// Package config 定义 Cluster Route 的持久化配置(供应商/路由/通道策略)
 // 并提供线程安全的读写管理。API Key 以密文形式落盘, 明文仅驻内存。
 package config
 
@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"cluster-router/internal/crypto"
+	"cluster-route/internal/crypto"
 )
 
 // TestResult 最近一次连通性测试结果(持久化, 供列表页展示)。

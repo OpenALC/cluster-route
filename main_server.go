@@ -1,6 +1,6 @@
 //go:build !desktop
 
-// cluster-router 无头服务模式: 控制台常驻, 供服务器/后台场景使用。
+// cluster-route 无头服务模式: 控制台常驻, 供服务器/后台场景使用。
 // 桌面应用请使用 wails build(构建标签 desktop)。
 package main
 
@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"cluster-router/internal/app"
+	"cluster-route/internal/app"
 )
 
 //go:embed all:web/dist
@@ -74,7 +74,7 @@ func main() {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	a.Stop()
-	fmt.Println("cluster-router 已退出")
+	fmt.Println("Cluster Route 已退出")
 }
 
 func openURL(url string) {

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"cluster-router/internal/config"
-	"cluster-router/internal/rewrite"
+	"cluster-route/internal/config"
+	"cluster-route/internal/rewrite"
 )
 
 // 通道常量。

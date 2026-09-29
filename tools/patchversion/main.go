@@ -13,7 +13,7 @@
 // 用法:
 //
 //	go run ./tools/patchversion -exe "build/bin/Cluster Route.exe"
-//	go run ./tools/patchversion -exe cluster-router-server.exe -original cluster-router-server.exe
+//	go run ./tools/patchversion -exe cluster-route-server.exe -original cluster-route-server.exe
 //
 // 版本信息默认读取 build/windows/info.json(wails 的信息文件, 唯一来源),
 // 可用命令行参数覆盖任意字段。

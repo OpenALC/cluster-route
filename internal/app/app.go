@@ -13,15 +13,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"cluster-router/internal/api"
-	"cluster-router/internal/archive"
-	"cluster-router/internal/config"
-	"cluster-router/internal/crypto"
-	"cluster-router/internal/pricing"
-	"cluster-router/internal/proxy"
-	"cluster-router/internal/routing"
-	"cluster-router/internal/stats"
-	"cluster-router/internal/store"
+	"cluster-route/internal/api"
+	"cluster-route/internal/archive"
+	"cluster-route/internal/config"
+	"cluster-route/internal/crypto"
+	"cluster-route/internal/pricing"
+	"cluster-route/internal/proxy"
+	"cluster-route/internal/routing"
+	"cluster-route/internal/stats"
+	"cluster-route/internal/store"
 )
 
 // App 运行中的应用实例。

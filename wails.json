@@ -1,6 +1,6 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "cluster-router",
+  "name": "cluster-route",
   "outputfilename": "Cluster Route",
   "frontend:dir": "web",
   "frontend:install": "npm install",
@@ -8,7 +8,7 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "http://localhost:5175",
   "author": {
-    "name": "cluster-router"
+    "name": "OpenALC"
   },
   "info": {
     "productName": "Cluster Route",

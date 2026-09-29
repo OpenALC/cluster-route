@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"cluster-router/internal/config"
+	"cluster-route/internal/config"
 )
 
 // upstreamClient 独立短超时客户端, 不与转发共享连接池。

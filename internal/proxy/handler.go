@@ -137,7 +137,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 鉴权
 	routerKey := h.mgr.RouterKey()
 	if routerKey == "" || subtle.ConstantTimeCompare([]byte(extractKey(r)), []byte(routerKey)) != 1 {
-		writeErr(w, format, http.StatusUnauthorized, "无效的 API Key: 请在 cc-switch/客户端中配置 cluster-router 的密钥")
+		writeErr(w, format, http.StatusUnauthorized, "无效的 API Key: 请在 cc-switch/客户端中配置 Cluster Route 的密钥")
 		return
 	}
 
@@ -172,7 +172,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dec := h.engine.Decide(info.Model, format, &info)
 	if len(dec.Chain) == 0 {
 		writeErr(w, format, http.StatusBadGateway,
-			"没有可用的转发目标: 请先在 cluster-router 中添加供应商并配置路由或默认供应商")
+			"没有可用的转发目标: 请先在 Cluster Route 中添加供应商并配置路由或默认供应商")
 		return
 	}
 
@@ -226,7 +226,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.record(body, &info, dec, s, trace, "", format, 0, Usage{}, false,
 			0, time.Since(start).Milliseconds(), lastErr)
-		writeErr(w, format, http.StatusBadGateway, "cluster-router: "+lastErr)
+		writeErr(w, format, http.StatusBadGateway, "Cluster Route: "+lastErr)
 		return
 	}
 	defer resp.Body.Close()

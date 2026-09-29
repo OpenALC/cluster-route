@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"cluster-router/internal/pricing"
-	"cluster-router/internal/store"
+	"cluster-route/internal/pricing"
+	"cluster-route/internal/store"
 )
 
 // Recorder 异步统计记录器。

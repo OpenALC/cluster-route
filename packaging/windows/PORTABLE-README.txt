@@ -6,11 +6,11 @@ Cluster Route — 便携版 (Portable)
   Cluster Route.exe          桌面应用: 原生窗口(WebView2), 关窗即退出。
                              这是日常使用的推荐形态。
 
-  cluster-router-server.exe  无头服务: 控制台常驻, 无窗口。
+  cluster-route-server.exe   无头服务: 控制台常驻, 无窗口。
                              适合放进计划任务/后台服务长期运行。
 
   data/                      数据目录。留空即可 —— 程序首次启动会自动建库
-                             (config.db)。删除此目录即恢复出厂设置。
+                             (config.json 与 stats.db)。删除此目录即恢复出厂设置。
                              注意: 不要与上面任一程序复制到别的机器使用,
                              供应商密钥用 Windows DPAPI 加密, 换机器/换用户
                              无法解密。
@@ -18,8 +18,8 @@ Cluster Route — 便携版 (Portable)
 运行
 ----
   .\Cluster Route.exe                # 桌面应用
-  .\cluster-router-server.exe        # 无头服务(后台)
-  .\cluster-router-server.exe -open  # 无头服务, 启动后自动打开浏览器
+  .\cluster-route-server.exe        # 无头服务(后台)
+  .\cluster-route-server.exe -open  # 无头服务, 启动后自动打开浏览器
 
 无头服务可选参数:
 

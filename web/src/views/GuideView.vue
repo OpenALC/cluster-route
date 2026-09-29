@@ -44,7 +44,7 @@ export default defineComponent({
       <!-- 1 -->
       <div class="card p-5">
         <h2 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-6 w-6 items-center justify-center rounded-lg bg-sky-600 text-xs font-bold text-white">1</span> 在 cc-switch 中添加一个供应商条目</h2>
-        <p class="mb-3 text-xs text-slate-400">把 cluster-router 当作唯一供应商: 以后增删真实供应商都不需要再动 cc-switch。</p>
+        <p class="mb-3 text-xs text-slate-400">把 Cluster Route 当作唯一供应商: 以后增删真实供应商都不需要再动 cc-switch。</p>
         <div class="space-y-2">
           <div class="flex items-center gap-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-950/60">
             <div class="min-w-0 flex-1">
