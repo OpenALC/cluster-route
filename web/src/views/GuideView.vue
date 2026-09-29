@@ -48,7 +48,7 @@ export default defineComponent({
         <div class="space-y-2">
           <div class="flex items-center gap-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-950/60">
             <div class="min-w-0 flex-1">
-              <div class="text-[11px] text-slate-400">BASE_URL</div>
+              <div class="text-[11px] text-slate-400">BASE_URL(Anthropic /v1/messages 与 OpenAI /v1/chat/completions 同一入口, 按路径自动识别)</div>
               <div class="truncate font-mono text-sm">{{ baseUrl }}</div>
             </div>
             <button class="btn-ghost !px-2" @click="copy(baseUrl, 'url')"><IconCheck v-if="copied === 'url'" class="h-4 w-4 text-emerald-500" /><IconCopy v-else class="h-4 w-4" /></button>
@@ -61,7 +61,7 @@ export default defineComponent({
             <button class="btn-ghost !px-2" @click="copy(routerKey, 'key')"><IconCheck v-if="copied === 'key'" class="h-4 w-4 text-emerald-500" /><IconCopy v-else class="h-4 w-4" /></button>
           </div>
         </div>
-        <p class="mt-3 text-[11px] text-slate-400">cc-switch 会把它写入 ~/.claude/settings.json 的 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN。</p>
+        <p class="mt-3 text-[11px] text-slate-400">cc-switch 会把它写入 ~/.claude/settings.json 的 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN;「一键获取模型」可直接使用(网关返回已配置的路由别名与模型池)。</p>
       </div>
 
       <!-- 2 -->

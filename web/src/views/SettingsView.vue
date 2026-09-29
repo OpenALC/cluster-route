@@ -1,26 +1,32 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
 import { api, Settings } from '../api';
-import { toast } from '../toast';
+import { toast, confirmDialog } from '../toast';
 import Toggle from '../components/Toggle.vue';
 import { fmtBytes } from '../format';
+import IconCopy from '~icons/lucide/copy';
+import IconCheck from '~icons/lucide/check';
 
 export default defineComponent({
   name: 'SettingsView',
-  components: { Toggle },
+  components: { Toggle, IconCopy, IconCheck },
   data() {
     return {
       s: null as Settings | null,
       dropped: 0,
       saving: false,
       saved: false,
+      routerKey: '',
+      rotating: false,
+      copied: false,
     };
   },
   mounted() {
-    Promise.all([api.settings(), api.overview('all')])
-      .then(([s, ov]) => {
+    Promise.all([api.settings(), api.overview('all'), api.connection()])
+      .then(([s, ov, c]) => {
         this.s = s;
         this.dropped = ov.stats_dropped;
+        this.routerKey = c.router_key;
       })
       .catch((e) => toast('error', e.message));
   },
@@ -34,6 +40,27 @@ export default defineComponent({
         .then(() => { this.saved = true; setTimeout(() => { this.saved = false; }, 2000); })
         .catch((e) => toast('error', e.message))
         .finally(() => { this.saving = false; });
+    },
+    copyKey(): void {
+      if (!this.routerKey) return;
+      navigator.clipboard.writeText(this.routerKey).then(() => {
+        this.copied = true;
+        setTimeout(() => { this.copied = false; }, 1500);
+      });
+    },
+    rotateKey(): void {
+      confirmDialog('轮换后旧 Key 立即失效, 需同步更新 cc-switch / 客户端中的 API Key。确定继续?', '轮换 API Key', '轮换')
+        .then((ok) => {
+          if (!ok) return;
+          this.rotating = true;
+          api.rotateKey()
+            .then((r) => {
+              this.routerKey = r.router_key;
+              toast('success', '已生成新 API Key, 请同步更新客户端配置');
+            })
+            .catch((e) => toast('error', e.message))
+            .finally(() => { this.rotating = false; });
+        });
     },
   },
 });
@@ -64,6 +91,16 @@ export default defineComponent({
         </div>
         <div class="mt-4">
           <Toggle v-model="s.unload_on_minimise" label="最小化到后台时卸载页面(桌面版: 释放渲染内存, 还原窗口时自动恢复当前页面)" />
+        </div>
+      </div>
+
+      <div class="card p-5">
+        <h2 class="mb-1 text-sm font-semibold">API Key</h2>
+        <p class="mb-3 text-xs text-slate-400">客户端(cc-switch 等)访问本网关的密钥。轮换后旧 Key 立即失效, 需同步更新客户端配置。</p>
+        <div class="flex items-center gap-2">
+          <code class="min-w-0 flex-1 truncate rounded-xl bg-slate-50 p-3 font-mono text-sm dark:bg-slate-950/60">{{ routerKey || '(读取中)' }}</code>
+          <button class="btn-ghost !px-2" @click="copyKey"><IconCheck v-if="copied" class="h-4 w-4 text-emerald-500" /><IconCopy v-else class="h-4 w-4" /></button>
+          <button class="btn-primary" :disabled="rotating || !routerKey" @click="rotateKey">{{ rotating ? '轮换中…' : '轮换密钥' }}</button>
         </div>
       </div>
 

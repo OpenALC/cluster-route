@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"cluster-router/internal/archive"
-	"cluster-router/internal/config"
-	"cluster-router/internal/routing"
-	"cluster-router/internal/rewrite"
-	"cluster-router/internal/stats"
-	"cluster-router/internal/store"
+	"cluster-route/internal/archive"
+	"cluster-route/internal/config"
+	"cluster-route/internal/routing"
+	"cluster-route/internal/rewrite"
+	"cluster-route/internal/stats"
+	"cluster-route/internal/store"
 )
 
 const maxBodyBytes = 32 << 20 // 32MB 请求体上限
@@ -138,6 +138,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	routerKey := h.mgr.RouterKey()
 	if routerKey == "" || subtle.ConstantTimeCompare([]byte(extractKey(r)), []byte(routerKey)) != 1 {
 		writeErr(w, format, http.StatusUnauthorized, "无效的 API Key: 请在 cc-switch/客户端中配置 cluster-router 的密钥")
+		return
+	}
+
+	// GET /v1/models 本地应答(模型发现), 不进入转发管线
+	if r.Method == http.MethodGet && strings.TrimSuffix(r.URL.Path, "/") == "/v1/models" {
+		h.serveModels(w, format)
 		return
 	}
 
@@ -331,7 +337,7 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, t routing.Target, body [
 	} else {
 		req.Header.Set("Authorization", "Bearer "+t.Key)
 	}
-	req.Header.Set("User-Agent", "cluster-router/1.0")
+	req.Header.Set("User-Agent", "cluster-route/1.0")
 	return req, nil
 }
 
