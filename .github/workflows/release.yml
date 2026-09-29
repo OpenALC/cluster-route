@@ -480,9 +480,9 @@ jobs:
           cd artifacts
           FILES="cluster-route_${VERSION}_linux_amd64.deb
           cluster-route_${VERSION}_linux_amd64.tar.gz
-          cluster-route_${VERSION}-1.x86_64.rpm
+          cluster-route-${VERSION}-1.x86_64.rpm
           cluster-route-server_${VERSION}_linux_amd64.deb
-          cluster-route-server_${VERSION}-1.x86_64.rpm
+          cluster-route-server-${VERSION}-1.x86_64.rpm
           Cluster-Route-${VERSION}-x64-Setup.exe
           Cluster-Route-${VERSION}-x64-Portable.zip
           SHA256SUMS.txt"
