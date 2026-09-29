@@ -1,0 +1,71 @@
+# nfpm 配置: Cluster Route 无头服务(headless server)
+#
+# 二进制以 CGO_ENABLED=0 全静态链接, 无 GTK / WebKit 运行时依赖,
+# 适合服务器与后台部署。附带 systemd 单元(DynamicUser, 仅绑 127.0.0.1)。
+#
+# 由 .github/workflows/release.yml 生成 .deb / .rpm。
+# 占位符 @@VERSION@@ / @@ARCH@@ 在打包前由 workflow 注入。
+name: "cluster-route-server"
+arch: "@@ARCH@@"
+platform: "linux"
+version: "@@VERSION@@"
+version_schema: none
+release: "1"
+section: "net"
+priority: "optional"
+maintainer: "OpenALC <https://github.com/openalc/cluster-route>"
+vendor: "OpenALC"
+homepage: "https://github.com/openalc/cluster-route"
+license: "MIT"
+
+# 全静态 Go 二进制, 本身零依赖; 只需 systemd 存在以承载随附的单元文件。
+overrides:
+  deb:
+    depends:
+      - systemd | systemd-tmpfiles
+  rpm:
+    depends:
+      - systemd
+
+description: |
+  Cluster Route headless gateway (server form).
+  Local model relay gateway: unifies multiple model providers behind one
+  entry point, transparently forwarding Anthropic (/v1/messages) and OpenAI
+  (/v1/chat/completions) requests with usage accounting, quota failover and
+  session archiving. Listens on 127.0.0.1 only.
+  Managed by systemd unit cluster-route-server.service (disabled by default).
+
+conflicts:
+  - cluster-route-server
+
+contents:
+  # 可执行文件
+  - src: "stage/usr/bin/cluster-route-server"
+    dst: "/usr/bin/cluster-route-server"
+    file_info:
+      mode: 0755
+
+  # systemd 单元
+  - src: "stage/usr/lib/systemd/system/cluster-route-server.service"
+    dst: "/usr/lib/systemd/system/cluster-route-server.service"
+    file_info:
+      mode: 0644
+
+scripts:
+  # 安装后重载 systemd, 但不自动启动 —— 使用者自行
+  #   systemctl enable --now cluster-route-server
+  # 以避免在其未预期的情况下占用 3721 端口并接管本地模型入口。
+  postinstall: |
+    #!/bin/sh
+    set -e
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    echo "cluster-route-server installed. Start it with:"
+    echo "  systemctl enable --now cluster-route-server"
+  preremove: |
+    #!/bin/sh
+    set -e
+    systemctl disable --now cluster-route-server >/dev/null 2>&1 || true
+  postremove: |
+    #!/bin/sh
+    set -e
+    systemctl daemon-reload >/dev/null 2>&1 || true

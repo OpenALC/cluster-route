@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <!-- 山丘: 中间高两侧低, 峰顶探出玻璃垫片, 谷线在底座高 1/3 处(y≈176) -->
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f8cc9"/>
+      <stop offset="1" stop-color="#0b6fad"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#dbeefb" stop-opacity="0.38"/>
+    </linearGradient>
+    <linearGradient id="glassStroke" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="baseRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9d5ea" stop-opacity="0.95"/>
+      <stop offset="0.5" stop-color="#cfe4f3" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#9dc2dd" stop-opacity="0.9"/>
+    </linearGradient>
+    <filter id="soft2" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.5"/></filter>
+    <filter id="frost20" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="20"/></filter>
+    <filter id="soft16" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
+    <filter id="soft24" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="24"/></filter>
+    <clipPath id="bgClip"><rect x="16" y="16" width="480" height="480" rx="112"/></clipPath>
+    <clipPath id="glassClip"><rect x="66" y="66" width="380" height="380" rx="64"/></clipPath>
+  </defs>
+
+  <!-- 底座新拟物边界: 柔和投影让白色区域在透明背景上有清晰轮廓 -->
+  <rect x="16" y="34" width="480" height="480" rx="112" fill="#7ba6c4" opacity="0.4" filter="url(#soft24)"/>
+  <!-- 实体底座: 白色天空 + 蓝色山丘 -->
+  <g clip-path="url(#bgClip)">
+    <rect x="16" y="16" width="480" height="480" fill="url(#sky)"/>
+    <path d="M16 350 C 110 210, 165 78, 226 58 C 240 53, 272 53, 286 58 C 347 78, 402 210, 496 350 L 496 496 L 16 496 Z"
+          fill="url(#hill)" filter="url(#soft2)"/>
+    <!-- 山脊白色雾化: 沿山脊线的柔光带 -->
+    <path d="M16 350 C 110 210, 165 78, 226 58 C 240 53, 272 53, 286 58 C 347 78, 402 210, 496 350"
+          fill="none" stroke="#ffffff" stroke-width="30" opacity="0.45" filter="url(#soft16)"/>
+  </g>
+  <!-- 底座边缘描边(新拟物双沿: 上亮下微暗) -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="url(#baseRim)" stroke-width="2.5"/>
+
+  <!-- 毛玻璃垫片: 山丘峰顶探出垫片上缘 -->
+  <rect x="66" y="84" width="380" height="380" rx="64" fill="#14486f" opacity="0.35" filter="url(#soft16)"/>
+  <g clip-path="url(#glassClip)">
+    <rect x="16" y="16" width="480" height="480" fill="url(#sky)"/>
+    <path d="M16 350 C 110 210, 165 78, 226 58 C 240 53, 272 53, 286 58 C 347 78, 402 210, 496 350 L 496 496 L 16 496 Z"
+          fill="url(#hill)" filter="url(#frost20)"/>
+    <rect x="66" y="66" width="380" height="380" fill="#ffffff" opacity="0.12"/>
+  </g>
+  <rect x="66" y="66" width="380" height="380" rx="64" fill="none" stroke="url(#glassStroke)" stroke-width="2.5"/>
+
+  <!-- 船舵图标: 深色投影 + 白色主体 -->
+  <g transform="translate(110 120) scale(12.2)" color="#1d5c8a" opacity="0.5">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 2v7.5M19 5l-5.23 5.23M22 12h-7.5m4.5 7l-5.23-5.23M12 14.5V22m-1.77-8.23L5 19m4.5-7H2m8.23-1.77L5 5"/><circle cx="12" cy="12" r="2.5"/></g>
+  </g>
+  <g transform="translate(110 110) scale(12.2)" color="#ffffff">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 2v7.5M19 5l-5.23 5.23M22 12h-7.5m4.5 7l-5.23-5.23M12 14.5V22m-1.77-8.23L5 19m4.5-7H2m8.23-1.77L5 5"/><circle cx="12" cy="12" r="2.5"/></g>
+  </g>
+</svg>

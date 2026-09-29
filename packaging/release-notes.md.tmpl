@@ -1,0 +1,48 @@
+## Cluster Route @@V@@
+
+本地模型中转网关: 统一入口分发多个模型供应商, 透明转发 Anthropic 与 OpenAI 协议, 不做协议转换。
+
+### Linux
+
+| 包 | 适用 |
+|---|---|
+| `cluster-route-@@V@@-1.x86_64.rpm` | 桌面应用 (Fedora / AlmaLinux 10 / Rocky 10 / openSUSE) |
+| `cluster-route_@@V@@_linux_amd64.deb` | 桌面应用 (Debian / Ubuntu) |
+| `cluster-route-server-@@V@@-1.x86_64.rpm` | 无头服务 + systemd 单元 |
+| `cluster-route-server_@@V@@_linux_amd64.deb` | 无头服务 |
+| `cluster-route_@@V@@_linux_amd64.tar.gz` | 便携包, 附带 `install.sh` 装到 `~/.local`(无需 root) |
+
+桌面应用运行时依赖 GTK3 + **WebKit2GTK 4.1**, RPM 已声明 `webkit2gtk4.1`。
+RHEL / Rocky / AlmaLinux **9** 仓库里只有 4.0, 需先从 EPEL/CRB 安装 `webkit2gtk4.1`:
+
+```sh
+sudo dnf install epel-release && sudo dnf config-manager --set-enabled crb
+sudo dnf install webkit2gtk4.1
+```
+
+无头服务以 `CGO_ENABLED=0` 全静态链接, **无** GTK/WebKit 依赖, 可直接丢进容器。
+安装后默认**不**启动(避免擅自占用 3721 端口):
+
+```sh
+systemctl enable --now cluster-route-server
+# 自定义数据目录: systemctl edit cluster-route-server
+```
+
+两种形态都只监听 `127.0.0.1:3721`, 不对局域网开放。
+
+### Windows
+
+| 包 | 说明 |
+|---|---|
+| `Cluster-Route-@@V@@-x64-Setup.exe` | NSIS 安装器, 含开始菜单/桌面快捷方式与卸载入口 |
+| `Cluster-Route-@@V@@-x64-Portable.zip` | 便携版, 解压即用; 内含桌面应用与无头服务两份 exe, 用法见《使用说明》 |
+
+两种包都只监听 `127.0.0.1`。桌面应用需要 WebView2 运行时 —— Windows 11 与较新的 Windows 10 已内置; 若启动后白屏, 请安装 Evergreen WebView2 Runtime。
+
+### 校验
+
+所有文件的 SHA256 见 `SHA256SUMS.txt`, 例如:
+
+```sh
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```

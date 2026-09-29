@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Cluster Route
+GenericName=Local Model Relay
+Comment=本地模型中转网关：统一入口分发多个模型供应商
+Comment[en]=Local model relay gateway: one entry point for multiple providers
+Exec=cluster-route
+Icon=cluster-route
+Terminal=false
+Categories=Development;Utility;
+Keywords=llm;ai;proxy;gateway;claude;relay;
+StartupNotify=true

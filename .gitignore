@@ -1,0 +1,31 @@
+# --- 运行期数据与本地状态(勿入库) ---
+data/
+build/bin/
+
+# --- 依赖 ---
+web/node_modules/
+
+# --- 编译 / 打包产物(可重新生成) ---
+*.exe
+*.log
+web/dist/
+
+# --- Wails 生成的 package.json 校验文件 ---
+web/package.json.md5
+
+# --- NSIS 打包时才下载的 WebView2 引导程序 ---
+build/windows/installer/tmp/
+
+# --- 本地工具 / 编辑器元数据 ---
+.v2c/
+.zcode/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- 代码签名证书: 严禁入库 ---
+*.pfx
+*.p12
+*.snk

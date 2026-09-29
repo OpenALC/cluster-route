@@ -1,0 +1,31 @@
+[Unit]
+Description=Cluster Route - local model relay gateway (headless)
+Documentation=https://github.com/openalc/cluster-route
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 便携/自定义数据目录: 执行 `systemctl edit cluster-route-server` 覆盖本行
+ExecStart=/usr/bin/cluster-route-server --data /var/lib/cluster-route
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+# 最小权限: 网关只监听 127.0.0.1, 无需 root
+DynamicUser=yes
+StateDirectory=cluster-route
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

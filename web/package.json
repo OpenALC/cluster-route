@@ -1,0 +1,28 @@
+{
+  "name": "cluster-router-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:fast": "vite build"
+  },
+  "dependencies": {
+    "@iconify-json/lucide": "^1.1.200",
+    "echarts": "^5.5.1",
+    "unplugin-icons": "^0.19.0",
+    "vue": "^3.4.38",
+    "vue-router": "^4.4.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.41",
+    "sharp": "^0.35.4",
+    "tailwindcss": "^3.4.10",
+    "typescript": "~5.5.4",
+    "vite": "^5.4.2",
+    "vue-tsc": "^2.0.29"
+  }
+}

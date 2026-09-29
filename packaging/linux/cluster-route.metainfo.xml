@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>cluster-route</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Cluster Route</name>
+  <summary>本地模型中转网关</summary>
+
+  <description>
+    <p>Cluster Route 是一个本地常驻网关：把多个模型供应商统一到同一个入口，
+    在 Claude Code 内用 /model 直接切换任意供应商的模型，并附带用量统计、
+    限额切换、会话留档与提示词注入。</p>
+    <p>同一份代码提供桌面应用（原生窗口）与无头服务两种形态：</p>
+    <ul>
+      <li>桌面应用 cluster-route：原生 GTK 窗口，关窗即退出。</li>
+      <li>无头服务 cluster-route-server：控制台常驻，适合服务器/后台部署，
+      通过 systemd 单元 cluster-route-server.service 管理。</li>
+    </ul>
+    <p>透明转发 Anthropic(/v1/messages) 与 OpenAI(/v1/chat/completions) 两种
+    协议，不做协议转换；仅监听 127.0.0.1，管理接口带跨源防护。</p>
+  </description>
+
+  <launchable type="desktop-id">cluster-route.desktop</launchable>
+  <url type="homepage">https://github.com/openalc/cluster-route</url>
+  <url type="vcs-browser">https://github.com/openalc/cluster-route</url>
+  <url type="bugtracker">https://github.com/openalc/cluster-route/issues</url>
+  <developer id="openalc">
+    <name>OpenALC</name>
+  </developer>
+  <provides>
+    <binary>cluster-route</binary>
+  </provides>
+  <releases>
+    <!-- @@VERSION@@ / @@DATE@@ 由 release workflow 在打包时从 tag 注入 -->
+    <release version="@@VERSION@@" date="@@DATE@@">
+      <url>https://github.com/openalc/cluster-route/releases</url>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
