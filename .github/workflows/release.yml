@@ -124,10 +124,12 @@ jobs:
           ldd dist-linux/cluster-route-server 2>&1 || true
 
       # 桌面应用: 必须带 webkit2_41; -s 跳过前端(上一步已构建)
+      # -o 显式指定输出名: wails 对 linux 平台不会自动追加 -linux-amd64 后缀
       - name: Build desktop app (Wails)
         run: |
           set -euo pipefail
-          wails build -skipbindings -s -clean -platform linux/amd64 -tags webkit2_41
+          wails build -skipbindings -s -clean -platform linux/amd64 -tags webkit2_41 \
+            -o "Cluster Route-linux-amd64"
           ls -l build/bin/
 
       - name: Verify Linux ELF linkage
@@ -346,6 +348,10 @@ jobs:
             if ($vi.CompanyName -ne 'OpenALC') { throw "CompanyName 不是 OpenALC: $f" }
             if (-not $vi.FileVersion.StartsWith($env:VERSION)) { throw "FileVersion $($vi.FileVersion) 与 tag $($env:VERSION) 不符" }
           }
+
+      # windows-latest(2025)镜像已不内置 NSIS, 需自行安装
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
 
       # wails.webview2runtime 宏写死了 File "tmp\MicrosoftEdgeWebview2Setup.exe",
       # 文件缺失时 makensis 直接失败(宏不联网下载), 故先拉取引导程序。

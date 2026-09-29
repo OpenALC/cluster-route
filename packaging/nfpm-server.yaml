@@ -52,20 +52,6 @@ contents:
       mode: 0644
 
 scripts:
-  # 安装后重载 systemd, 但不自动启动 —— 使用者自行
-  #   systemctl enable --now cluster-route-server
-  # 以避免在其未预期的情况下占用 3721 端口并接管本地模型入口。
-  postinstall: |
-    #!/bin/sh
-    set -e
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    echo "cluster-route-server installed. Start it with:"
-    echo "  systemctl enable --now cluster-route-server"
-  preremove: |
-    #!/bin/sh
-    set -e
-    systemctl disable --now cluster-route-server >/dev/null 2>&1 || true
-  postremove: |
-    #!/bin/sh
-    set -e
-    systemctl daemon-reload >/dev/null 2>&1 || true
+  postinstall: "packaging/linux/scripts/server-postinstall.sh"
+  preremove: "packaging/linux/scripts/server-preremove.sh"
+  postremove: "packaging/linux/scripts/server-postremove.sh"

@@ -10,6 +10,12 @@ web/node_modules/
 *.log
 web/dist/
 
+# --- 发布流水线的中间产物(CI 或本地复现) ---
+/dist-linux/
+/dist-win/
+/stage/
+/artifacts/
+
 # --- Wails 生成的 package.json 校验文件 ---
 web/package.json.md5
 
