@@ -23,7 +23,7 @@ import (
 //go:embed all:web/dist
 var webEmbed embed.FS
 
-const version = "0.3.0"
+const version = "0.3.1"
 
 func main() {
 	dataFlag := flag.String("data", "", "数据目录(默认便携模式用 exe 同目录 data, 不可写时回退到用户配置目录)")

@@ -2,6 +2,7 @@
 import { defineComponent } from 'vue';
 import { api, Settings } from '../api';
 import { toast, confirmDialog } from '../toast';
+import { theme, setThemeMode, ThemeMode } from '../theme';
 import Toggle from '../components/Toggle.vue';
 import { fmtBytes } from '../format';
 import IconCopy from '~icons/lucide/copy';
@@ -19,6 +20,7 @@ export default defineComponent({
       routerKey: '',
       rotating: false,
       copied: false,
+      themeMode: theme.mode as ThemeMode,
     };
   },
   mounted() {
@@ -47,6 +49,9 @@ export default defineComponent({
         this.copied = true;
         setTimeout(() => { this.copied = false; }, 1500);
       });
+    },
+    onThemeChange(): void {
+      setThemeMode(this.themeMode);
     },
     rotateKey(): void {
       confirmDialog('轮换后旧 Key 立即失效, 需同步更新 cc-switch / 客户端中的 API Key。确定继续?', '轮换 API Key', '轮换')
@@ -84,6 +89,14 @@ export default defineComponent({
           <div>
             <label class="label">请求明细保留天数(天级聚合永久保留)</label>
             <input v-model.number="s.retention_days" class="input !w-40" type="number" />
+          </div>
+          <div>
+            <label class="label">外观(即时生效, 保存在本机)</label>
+            <select v-model="themeMode" class="input !w-40" @change="onThemeChange">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
           </div>
         </div>
         <div class="mt-4">

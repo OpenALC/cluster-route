@@ -1,7 +1,9 @@
 <script lang="ts">
-import { defineComponent } from 'vue';
+import { defineComponent, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { theme, toggleTheme } from './theme';
+import { isDesktop } from './wails';
+import { api } from './api';
 import IconSun from '~icons/lucide/sun';
 import IconMoon from '~icons/lucide/moon';
 import IconActivity from '~icons/lucide/activity';
@@ -14,6 +16,7 @@ import IconSettings from '~icons/lucide/settings';
 import IconBook from '~icons/lucide/book-open';
 import Toasts from './components/Toasts.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import TitleBar from './components/TitleBar.vue';
 
 interface NavItem {
   to: string;
@@ -23,7 +26,7 @@ interface NavItem {
 
 export default defineComponent({
   name: 'App',
-  components: { IconSun, IconMoon, IconActivity, IconServer, IconRoute, IconArchive, IconTag, IconLogs, IconSettings, IconBook, Toasts, ConfirmDialog },
+  components: { IconSun, IconMoon, IconActivity, IconServer, IconRoute, IconArchive, IconTag, IconLogs, IconSettings, IconBook, Toasts, ConfirmDialog, TitleBar },
   setup() {
     const route = useRoute();
     const items: NavItem[] = [
@@ -38,15 +41,25 @@ export default defineComponent({
     ];
     const isActive = (to: string): boolean =>
       to === '/' ? route.path === '/' : route.path.startsWith(to);
-    return { theme, toggleTheme, items, isActive };
+    const ver = ref('');
+    onMounted(() => {
+      api.version().then((v) => { ver.value = v.version; }).catch(() => undefined);
+    });
+    return { theme, toggleTheme, items, isActive, isDesktop, ver };
   },
 });
 </script>
 
 <template>
-  <div class="flex min-h-screen">
+  <div class="min-h-screen">
+    <!-- 桌面模式: 自定义标题栏(拖动/窗口控制/主题切换) -->
+    <TitleBar v-if="isDesktop" />
+
     <!-- 侧边栏 -->
-    <aside class="fixed inset-y-0 left-0 z-20 flex w-56 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+    <aside
+      class="fixed left-0 z-20 flex w-56 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+      :class="isDesktop ? 'top-9 bottom-0' : 'inset-y-0'"
+    >
       <div class="flex items-center gap-3 px-5 py-5">
         <img src="/logo.svg" alt="Cluster Route" class="h-10 w-10 rounded-[11px] shadow-sm" />
         <div class="leading-none select-none">
@@ -68,12 +81,13 @@ export default defineComponent({
           {{ item.label }}
         </RouterLink>
       </nav>
-      <div class="px-5 py-4 text-[11px] text-slate-400">v0.2.0</div>
+      <div v-if="ver" class="px-5 py-4 text-[11px] text-slate-400">v{{ ver }}</div>
     </aside>
 
     <!-- 主区域 -->
     <div class="ml-56 flex min-h-screen flex-1 flex-col">
-      <header class="sticky top-0 z-10 flex items-center justify-end border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
+      <!-- 浏览器模式: 页头承载主题切换(桌面模式由标题栏承载) -->
+      <header v-if="!isDesktop" class="sticky top-0 z-10 flex items-center justify-end border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
         <button class="btn-ghost !px-2" title="切换主题" @click="toggleTheme">
           <IconSun v-if="theme.dark" class="h-[18px] w-[18px]" />
           <IconMoon v-else class="h-[18px] w-[18px]" />

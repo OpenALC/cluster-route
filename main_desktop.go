@@ -23,7 +23,7 @@ import (
 //go:embed all:web/dist
 var webEmbed embed.FS
 
-const version = "0.3.0"
+const version = "0.3.1"
 
 // CrApp 暴露给前端的绑定对象。
 type CrApp struct {
@@ -123,6 +123,8 @@ func main() {
 		Height:    800,
 		MinWidth:  980,
 		MinHeight: 640,
+		// 无边框窗口: 由前端 TitleBar 组件承担拖动与最小化/最大化/关闭
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets:  mustSub(webEmbed, "web/dist"),
 			Handler: lateBoundHandler,
