@@ -2,7 +2,7 @@
 import { defineComponent, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { theme, toggleTheme } from './theme';
-import { isDesktop } from './wails';
+import { isDesktop, rt } from './wails';
 import { api } from './api';
 import IconSun from '~icons/lucide/sun';
 import IconMoon from '~icons/lucide/moon';
@@ -42,23 +42,30 @@ export default defineComponent({
     const isActive = (to: string): boolean =>
       to === '/' ? route.path === '/' : route.path.startsWith(to);
     const ver = ref('');
+    // 自定义标题栏只在无边框形态(Windows 桌面)下显示;
+    // Linux 桌面使用系统标题栏(Frameless 在部分 Linux 环境会与系统栏并存)。
+    // 初始跟随 isDesktop 以避免 Windows 下页头闪现, 随后按平台校正。
+    const showTitleBar = ref(isDesktop);
     onMounted(() => {
       api.version().then((v) => { ver.value = v.version; }).catch(() => undefined);
+      rt()?.Environment()
+        .then((e) => { showTitleBar.value = e.platform === 'windows'; })
+        .catch(() => undefined);
     });
-    return { theme, toggleTheme, items, isActive, isDesktop, ver };
+    return { theme, toggleTheme, items, isActive, showTitleBar, ver };
   },
 });
 </script>
 
 <template>
   <div class="min-h-screen">
-    <!-- 桌面模式: 自定义标题栏(拖动/窗口控制/主题切换) -->
-    <TitleBar v-if="isDesktop" />
+    <!-- 桌面模式(Windows 无边框): 自定义标题栏(拖动/窗口控制/主题切换) -->
+    <TitleBar v-if="showTitleBar" />
 
     <!-- 侧边栏 -->
     <aside
       class="fixed left-0 z-20 flex w-56 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
-      :class="isDesktop ? 'top-9 bottom-0' : 'inset-y-0'"
+      :class="showTitleBar ? 'top-9 bottom-0' : 'inset-y-0'"
     >
       <div class="flex items-center gap-3 px-5 py-5">
         <img src="/logo.svg" alt="Cluster Route" class="h-10 w-10 rounded-[11px] shadow-sm" />
@@ -86,8 +93,8 @@ export default defineComponent({
 
     <!-- 主区域 -->
     <div class="ml-56 flex min-h-screen flex-1 flex-col">
-      <!-- 浏览器模式: 页头承载主题切换(桌面模式由标题栏承载) -->
-      <header v-if="!isDesktop" class="sticky top-0 z-10 flex items-center justify-end border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
+      <!-- 浏览器/Linux 桌面模式: 页头承载主题切换(Windows 无边框模式由标题栏承载) -->
+      <header v-if="!showTitleBar" class="sticky top-0 z-10 flex items-center justify-end border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
         <button class="btn-ghost !px-2" title="切换主题" @click="toggleTheme">
           <IconSun v-if="theme.dark" class="h-[18px] w-[18px]" />
           <IconMoon v-else class="h-[18px] w-[18px]" />

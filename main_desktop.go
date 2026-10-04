@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -23,7 +24,7 @@ import (
 //go:embed all:web/dist
 var webEmbed embed.FS
 
-const version = "0.3.2"
+const version = "0.3.3"
 
 // CrApp 暴露给前端的绑定对象。
 type CrApp struct {
@@ -123,8 +124,10 @@ func main() {
 		Height:    800,
 		MinWidth:  980,
 		MinHeight: 640,
-		// 无边框窗口: 由前端 TitleBar 组件承担拖动与最小化/最大化/关闭
-		Frameless: true,
+		// 无边框窗口(仅 Windows): 由前端 TitleBar 组件承担拖动与最小化/最大化/关闭。
+		// Linux 下 Frameless 只是 gtk_window_set_decorated(FALSE), 在 WSLg/Weston
+		// 等合成器仍会绘制服务端装饰, 会出现系统+自定义双标题栏, 故 Linux 保留系统栏。
+		Frameless: runtime.GOOS == "windows",
 		AssetServer: &assetserver.Options{
 			Assets:  mustSub(webEmbed, "web/dist"),
 			Handler: lateBoundHandler,

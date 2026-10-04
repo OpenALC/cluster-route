@@ -4,13 +4,14 @@ import { api, Settings } from '../api';
 import { toast, confirmDialog } from '../toast';
 import { theme, setThemeMode, ThemeMode } from '../theme';
 import Toggle from '../components/Toggle.vue';
+import Select from '../components/Select.vue';
 import { fmtBytes } from '../format';
 import IconCopy from '~icons/lucide/copy';
 import IconCheck from '~icons/lucide/check';
 
 export default defineComponent({
   name: 'SettingsView',
-  components: { Toggle, IconCopy, IconCheck },
+  components: { Toggle, Select, IconCopy, IconCheck },
   data() {
     return {
       s: null as Settings | null,
@@ -21,6 +22,11 @@ export default defineComponent({
       rotating: false,
       copied: false,
       themeMode: theme.mode as ThemeMode,
+      themeOptions: [
+        { value: 'system', label: '跟随系统' },
+        { value: 'light', label: '浅色' },
+        { value: 'dark', label: '深色' },
+      ],
     };
   },
   mounted() {
@@ -92,11 +98,7 @@ export default defineComponent({
           </div>
           <div>
             <label class="label">外观(即时生效, 保存在本机)</label>
-            <select v-model="themeMode" class="input !w-40" @change="onThemeChange">
-              <option value="system">跟随系统</option>
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-            </select>
+            <Select v-model="themeMode" :options="themeOptions" width="w-40" @change="onThemeChange" />
           </div>
         </div>
         <div class="mt-4">

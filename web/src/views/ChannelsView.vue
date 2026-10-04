@@ -3,6 +3,7 @@ import { defineComponent } from 'vue';
 import { api, Provider, Route as RouteRow, Settings, Target } from '../api';
 import { toast } from '../toast';
 import Toggle from '../components/Toggle.vue';
+import Select from '../components/Select.vue';
 import IconPlus from '~icons/lucide/plus';
 import IconTrash from '~icons/lucide/trash-2';
 import IconUp from '~icons/lucide/arrow-up';
@@ -16,7 +17,7 @@ type Tab = 'routes' | 'lightweight' | 'subagent' | 'failover';
 
 export default defineComponent({
   name: 'ChannelsView',
-  components: { Toggle, IconPlus, IconTrash, IconUp, IconDown, IconZap, IconBot, IconShield, IconList },
+  components: { Toggle, Select, IconPlus, IconTrash, IconUp, IconDown, IconZap, IconBot, IconShield, IconList },
   data() {
     return {
       tab: 'routes' as Tab,
@@ -37,6 +38,12 @@ export default defineComponent({
       const map: Record<string, string> = {};
       this.providers.forEach((p) => { map[p.id] = p.name; });
       return (id: string) => map[id] || '(未知供应商)';
+    },
+    providerOptions(): { value: string; label: string }[] {
+      return this.providers.map((p) => ({ value: p.id, label: p.name }));
+    },
+    providerOptionsWithNone(): (label: string) => { value: string; label: string }[] {
+      return (label: string) => [{ value: '', label }, ...this.providerOptions];
     },
   },
   mounted() {
@@ -115,9 +122,7 @@ export default defineComponent({
         <div v-for="(r, i) in routes" :key="i" class="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-2.5 dark:bg-slate-950/50">
           <input v-model="r.alias" class="input !w-44 font-mono text-xs" placeholder="别名, 如 glm-4.7" />
           <span class="text-slate-400">→</span>
-          <select v-model="r.provider_id" class="input !w-44 text-xs">
-            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
+          <Select v-model="r.provider_id" :options="providerOptions" width="w-44" />
           <input v-model="r.upstream_model" class="input !w-56 font-mono text-xs" placeholder="上游模型名, 如 glm-4.7-air" />
           <Toggle v-model="r.enabled" />
           <button class="btn-danger !px-2" @click="removeRoute(i)"><IconTrash class="h-4 w-4" /></button>
@@ -129,14 +134,12 @@ export default defineComponent({
           <div class="text-sm font-medium">默认供应商(兜底)</div>
           <div class="text-xs text-slate-400">路由表未命中时透传原模型名到该供应商</div>
         </div>
-        <select
-          class="input !w-52 text-xs"
-          :value="settings.default_provider_id"
-          @change="saveSettings((s) => { s.default_provider_id = ($event.target as HTMLSelectElement).value; })"
-        >
-          <option value="">(不设置, 未命中即报错)</option>
-          <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-        </select>
+        <Select
+          width="w-52"
+          :model-value="settings.default_provider_id"
+          :options="providerOptionsWithNone('(不设置, 未命中即报错)')"
+          @change="(v: string) => saveSettings((s) => { s.default_provider_id = v; })"
+        />
       </div>
     </div>
 
@@ -191,9 +194,7 @@ export default defineComponent({
         <div class="space-y-2">
           <div v-for="(t, i) in settings.lightweight.targets" :key="i" class="flex items-center gap-2">
             <span class="w-6 text-center text-xs font-bold text-sky-600">{{ i + 1 }}</span>
-            <select v-model="t.provider_id" class="input !w-48 text-xs">
-              <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <Select v-model="t.provider_id" :options="providerOptions" width="w-48" />
             <input v-model="t.model" class="input !w-56 font-mono text-xs" placeholder="上游模型名" />
             <button class="btn-ghost !px-1.5" :disabled="i === 0" @click="move(settings!.lightweight.targets, i, -1)"><IconUp class="h-3.5 w-3.5" /></button>
             <button class="btn-ghost !px-1.5" :disabled="i === settings!.lightweight.targets.length - 1" @click="move(settings!.lightweight.targets, i, 1)"><IconDown class="h-3.5 w-3.5" /></button>
@@ -225,14 +226,11 @@ export default defineComponent({
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="label">转发目标供应商</label>
-            <select
-              class="input text-xs"
-              :value="settings.subagent.target.provider_id"
-              @change="saveSettings((s) => { s.subagent.target.provider_id = ($event.target as HTMLSelectElement).value; })"
-            >
-              <option value="">(不转发)</option>
-              <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <Select
+              :model-value="settings.subagent.target.provider_id"
+              :options="providerOptionsWithNone('(不转发)')"
+              @change="(v: string) => saveSettings((s) => { s.subagent.target.provider_id = v; })"
+            />
           </div>
           <div>
             <label class="label">指定模型</label>
@@ -289,9 +287,7 @@ export default defineComponent({
         <div class="space-y-2">
           <div v-for="(t, i) in settings.failover.targets" :key="i" class="flex items-center gap-2">
             <span class="w-6 text-center text-xs font-bold text-rose-500">{{ i + 1 }}</span>
-            <select v-model="t.provider_id" class="input !w-48 text-xs">
-              <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <Select v-model="t.provider_id" :options="providerOptions" width="w-48" />
             <input v-model="t.model" class="input !w-56 font-mono text-xs" placeholder="上游模型名" />
             <button class="btn-ghost !px-1.5" :disabled="i === 0" @click="move(settings!.failover.targets, i, -1)"><IconUp class="h-3.5 w-3.5" /></button>
             <button class="btn-ghost !px-1.5" :disabled="i === settings!.failover.targets.length - 1" @click="move(settings!.failover.targets, i, 1)"><IconDown class="h-3.5 w-3.5" /></button>

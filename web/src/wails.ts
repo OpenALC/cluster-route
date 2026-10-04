@@ -6,6 +6,7 @@ export interface WailsRuntime {
   WindowMinimise(): void;
   WindowToggleMaximise(): void;
   WindowIsMaximised(): Promise<boolean>;
+  Environment(): Promise<{ platform: string; arch: string; buildType: string }>;
   Quit(): void;
 }
 

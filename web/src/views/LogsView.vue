@@ -3,9 +3,11 @@ import { defineComponent } from 'vue';
 import { api, Provider, RequestRow } from '../api';
 import { toast } from '../toast';
 import { fmtTokens, fmtCost, fmtTime, channelLabels, channelBadge } from '../format';
+import Select from '../components/Select.vue';
 
 export default defineComponent({
   name: 'LogsView',
+  components: { Select },
   data() {
     return {
       rows: [] as RequestRow[],
@@ -17,7 +19,30 @@ export default defineComponent({
       model: '',
       loading: false,
       expanded: 0,
+      rangeOptions: [
+        { value: '24h', label: '24小时' },
+        { value: '7d', label: '7天' },
+        { value: '30d', label: '30天' },
+        { value: 'all', label: '全部' },
+      ],
+      channelOptions: [
+        { value: '', label: '全部通道' },
+        { value: 'main', label: '主对话' },
+        { value: 'lightweight', label: '轻量' },
+        { value: 'subagent', label: '子agent' },
+        { value: 'default', label: '默认' },
+      ],
+      statusOptions: [
+        { value: '', label: '全部状态' },
+        { value: 'ok', label: '成功' },
+        { value: 'error', label: '失败' },
+      ],
     };
+  },
+  computed: {
+    providerOptions(): { value: string; label: string }[] {
+      return [{ value: '', label: '全部供应商' }, ...this.providers.map((p) => ({ value: p.id, label: p.name }))];
+    },
   },
   mounted() {
     api.providers().then((p) => { this.providers = p || []; }).catch(() => undefined);
@@ -55,28 +80,10 @@ export default defineComponent({
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-xl font-bold">日志</h1>
       <div class="flex flex-wrap items-center gap-2">
-        <select v-model="range" class="input !w-28 !py-1.5 text-xs" @change="load">
-          <option value="24h">24小时</option>
-          <option value="7d">7天</option>
-          <option value="30d">30天</option>
-          <option value="all">全部</option>
-        </select>
-        <select v-model="channel" class="input !w-28 !py-1.5 text-xs" @change="load">
-          <option value="">全部通道</option>
-          <option value="main">主对话</option>
-          <option value="lightweight">轻量</option>
-          <option value="subagent">子agent</option>
-          <option value="default">默认</option>
-        </select>
-        <select v-model="provider" class="input !w-32 !py-1.5 text-xs" @change="load">
-          <option value="">全部供应商</option>
-          <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-        </select>
-        <select v-model="status" class="input !w-24 !py-1.5 text-xs" @change="load">
-          <option value="">全部状态</option>
-          <option value="ok">成功</option>
-          <option value="error">失败</option>
-        </select>
+        <Select v-model="range" :options="rangeOptions" width="w-28" compact @change="load" />
+        <Select v-model="channel" :options="channelOptions" width="w-28" compact @change="load" />
+        <Select v-model="provider" :options="providerOptions" width="w-32" compact @change="load" />
+        <Select v-model="status" :options="statusOptions" width="w-24" compact @change="load" />
         <input v-model="model" class="input !w-36 !py-1.5 text-xs" placeholder="模型过滤" @keyup.enter="load" />
         <button class="btn-ghost !py-1.5 text-xs" @click="load">查询</button>
       </div>
