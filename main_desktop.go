@@ -23,7 +23,7 @@ import (
 //go:embed all:web/dist
 var webEmbed embed.FS
 
-const version = "0.3.1"
+const version = "0.3.2"
 
 // CrApp 暴露给前端的绑定对象。
 type CrApp struct {

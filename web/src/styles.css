@@ -9,6 +9,13 @@
   body {
     @apply bg-slate-100 text-slate-800 dark:bg-slate-950 dark:text-slate-200;
   }
+  /* 让原生控件(下拉弹层/滚动条等)跟随当前明暗方案 */
+  :root {
+    color-scheme: light;
+  }
+  :root.dark {
+    color-scheme: dark;
+  }
 }
 
 @layer components {
@@ -32,6 +39,15 @@
     @apply w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition
       placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20
       dark:border-slate-700 dark:bg-slate-950 dark:placeholder:text-slate-600;
+  }
+  /* 下拉框: 替换系统默认箭头为统一的 chevron, 选项颜色跟随主题 */
+  select.input {
+    @apply appearance-none bg-no-repeat pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.6rem center;
+  }
+  select.input option {
+    @apply bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-200;
   }
   .label {
     @apply mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400;
