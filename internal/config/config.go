@@ -65,8 +65,8 @@ type Lightweight struct {
 	Aliases []string `json:"aliases"` // 触发别名(客户端把小模型槽位配成这些名字)
 	Heur    struct {
 		Enabled        bool `json:"enabled"`
-		MaxBodyBytes   int  `json:"max_body_bytes"`    // 0=默认 32KB
-		RequireNoTools bool `json:"require_no_tools"`  // 无工具定义才算轻量
+		MaxBodyBytes   int  `json:"max_body_bytes"`   // 0=默认 32KB
+		RequireNoTools bool `json:"require_no_tools"` // 无工具定义才算轻量
 	} `json:"heuristic"`
 }
 
@@ -80,7 +80,7 @@ type Subagent struct {
 // Failover 限额切换策略。
 type Failover struct {
 	Enabled     bool     `json:"enabled"`
-	Mode        string   `json:"mode"` // "manual" | "same_name"
+	Mode        string   `json:"mode"`    // "manual" | "same_name"
 	Targets     []Target `json:"targets"` // manual 模式的有序列表
 	On5xx       bool     `json:"on_5xx"`  // 服务端错误也切换
 	MaxAttempts int      `json:"max_attempts"`
@@ -246,6 +246,17 @@ func (m *Manager) ensureDefaults() {
 	}
 	if s.Lightweight.Heur.MaxBodyBytes == 0 {
 		s.Lightweight.Heur.MaxBodyBytes = 32 * 1024
+	}
+	// 切片必须规范化为空数组而非 null: 前端拿到 null 后直接 push/splice 会抛
+	// TypeError(全新配置与删除最后一个供应商后都会出现 null)。
+	if s.Lightweight.Targets == nil {
+		s.Lightweight.Targets = []Target{}
+	}
+	if s.Lightweight.Aliases == nil {
+		s.Lightweight.Aliases = []string{}
+	}
+	if s.Failover.Targets == nil {
+		s.Failover.Targets = []Target{}
 	}
 	if s.Archive.KeepPerSession == 0 {
 		s.Archive.KeepPerSession = 3

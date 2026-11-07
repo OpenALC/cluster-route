@@ -5,7 +5,9 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -78,10 +80,18 @@ func (s *statusWriter) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
-// guard 跨源防护: 放行同源与 Wails 桌面窗口(wails.localhost),
+// guard 跨源防护: 只接受回环主机名, 放行同源与 Wails 桌面窗口(wails.localhost),
 // 其余跨站请求(浏览器反匿名页伪造)一律拒绝; 为放行来源补 CORS 并处理预检。
+//
+// 仅比较 Origin 与 r.Host 不足以防 DNS rebinding: 攻击者把自有域名解析到
+// 127.0.0.1 后, 浏览器发出的 Origin 与 Host 都是该域名, 二者相等即被放行。
+// 因此这里额外要求 Host 必须属于回环白名单。
 func guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, `{"error":"non-loopback host rejected"}`, http.StatusForbidden)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			host := hostOf(origin)
 			if host != r.Host && !strings.HasPrefix(origin, "http://wails.") && !strings.HasPrefix(origin, "https://wails.") {
@@ -99,6 +109,20 @@ func guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loopbackHost 判断请求 Host 是否为回环地址(Wails 桌面窗口使用 wails.localhost)。
+func loopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "wails.localhost":
+		return true
+	}
+	return false
 }
 
 func hostOf(origin string) string {
@@ -155,6 +179,12 @@ func (h *handlers) serveAdmin() http.Handler {
 func spa(fsys fs.FS) http.Handler {
 	fileServer := http.FileServerFS(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 非 GET/HEAD 一律按接口错误返回 JSON: 客户端 BASE_URL 配错(如漏掉
+		// /v1 前缀)时会落到这里, 返回 HTML 200 会让排查变得非常困难。
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeErr(w, http.StatusNotFound, "未知接口路径: "+r.URL.Path)
+			return
+		}
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p == "" {
 			p = "index.html"
@@ -188,5 +218,8 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 }
 
 func readBodyJSON(r *http.Request, v any) error {
-	return json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8<<20)).Decode(v)
+	return json.NewDecoder(io.LimitReader(r.Body, maxAdminBodyBytes)).Decode(v)
 }
+
+// maxAdminBodyBytes 管理接口请求体上限(前端表单最大是定价导入 JSON)。
+const maxAdminBodyBytes = 8 << 20

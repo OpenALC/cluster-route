@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"time"
 
 	"cluster-route/internal/config"
@@ -29,17 +30,41 @@ type Snapshot struct {
 
 // Service 归档服务。
 type Service struct {
-	mgr *config.Manager
-	st  *store.Store
-	dir string
-	ch  chan Snapshot
+	mgr  *config.Manager
+	st   *store.Store
+	dir  string
+	ch   chan Snapshot
+	done chan struct{} // Run 退出后关闭
+
+	mu      sync.Mutex
+	lastSeq map[string]int64 // 会话键 -> 已分配的最大 seq(保证严格递增)
 }
 
 var safeKeyRe = regexp.MustCompile(`[^0-9a-zA-Z_-]`)
 
 // New 创建服务; dir 为 sessions 存储根目录。
 func New(mgr *config.Manager, st *store.Store, dir string) *Service {
-	return &Service{mgr: mgr, st: st, dir: dir, ch: make(chan Snapshot, 2)}
+	return &Service{
+		mgr: mgr, st: st, dir: dir,
+		ch:      make(chan Snapshot, 2),
+		done:    make(chan struct{}),
+		lastSeq: map[string]int64{},
+	}
+}
+
+// Done 在 Run 退出后关闭(停机时同步用)。
+func (s *Service) Done() <-chan struct{} { return s.done }
+
+// Drain 同步处理队列中剩余快照(停机路径使用, 避免最新上下文丢失)。
+func (s *Service) Drain() {
+	for {
+		select {
+		case snap := <-s.ch:
+			s.write(snap)
+		default:
+			return
+		}
+	}
 }
 
 // Submit 非阻塞投递; 满员或超大时丢弃。
@@ -60,11 +85,13 @@ func (s *Service) Submit(snap Snapshot) {
 
 // Run 后台写盘循环。
 func (s *Service) Run(stop <-chan struct{}) {
+	defer close(s.done)
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stop:
+			s.Drain()
 			return
 		case snap := <-s.ch:
 			s.write(snap)
@@ -84,10 +111,19 @@ func (s *Service) write(snap Snapshot) {
 		log.Printf("[archive] 创建目录失败: %v", err)
 		return
 	}
+	// seq 必须严格递增: 列表与「每会话保留 N 份」的裁剪都按 seq DESC 进行,
+	// 同一秒内的多个请求若共用 Ts 会互相覆盖文件并打乱保留顺序。
 	seq := snap.Ts
 	if seq == 0 {
 		seq = time.Now().UnixMilli()
 	}
+	s.mu.Lock()
+	if last := s.lastSeq[key]; seq <= last {
+		seq = last + 1
+	}
+	s.lastSeq[key] = seq
+	s.mu.Unlock()
+
 	rel := filepath.ToSlash(filepath.Join(key, fmt.Sprintf("%d.json", seq)))
 	abs := filepath.Join(s.dir, rel)
 	if err := os.WriteFile(abs, snap.Body, 0o600); err != nil {
@@ -107,8 +143,9 @@ func (s *Service) write(snap Snapshot) {
 	if title == "" {
 		title = "(空会话)"
 	}
-	if len(title) > 80 {
-		title = title[:80]
+	// 按 rune 截断, 避免切断 UTF-8 多字节字符产生乱码。
+	if r := []rune(title); len(r) > 80 {
+		title = string(r[:80])
 	}
 	_ = s.st.UpsertSession(store.SessionRow{
 		Key: snap.Key, Project: snap.Project, Title: title,
