@@ -182,19 +182,19 @@ func stringEntry(key, value string) []byte {
 
 // fixedFileInfo 生成 VS_FIXEDFILEINFO (52 字节)。
 func fixedFileInfo(ver [4]uint16) []byte {
-	b := u32(0xFEEF04BD) // dwSignature
-	b = append(b, u32(0x00010000)...)                   // dwStrucVersion
+	b := u32(0xFEEF04BD)                                     // dwSignature
+	b = append(b, u32(0x00010000)...)                        // dwStrucVersion
 	b = append(b, u32(uint32(ver[0])<<16|uint32(ver[1]))...) // dwFileVersionMS
 	b = append(b, u32(uint32(ver[2])<<16|uint32(ver[3]))...) // dwFileVersionLS
 	b = append(b, u32(uint32(ver[0])<<16|uint32(ver[1]))...) // dwProductVersionMS
 	b = append(b, u32(uint32(ver[2])<<16|uint32(ver[3]))...) // dwProductVersionLS
-	b = append(b, u32(0x0000003F)...)                   // dwFileFlagsMask
-	b = append(b, u32(0x00000000)...)                   // dwFileFlags
-	b = append(b, u32(0x00040004)...)                   // dwFileOS = VOS_NT_WINDOWS32
-	b = append(b, u32(0x00000001)...)                   // dwFileType = VFT_APP
-	b = append(b, u32(0x00000000)...)                   // dwFileSubtype
-	b = append(b, u32(0x00000000)...)                   // dwFileDateMS
-	b = append(b, u32(0x00000000)...)                   // dwFileDateLS
+	b = append(b, u32(0x0000003F)...)                        // dwFileFlagsMask
+	b = append(b, u32(0x00000000)...)                        // dwFileFlags
+	b = append(b, u32(0x00040004)...)                        // dwFileOS = VOS_NT_WINDOWS32
+	b = append(b, u32(0x00000001)...)                        // dwFileType = VFT_APP
+	b = append(b, u32(0x00000000)...)                        // dwFileSubtype
+	b = append(b, u32(0x00000000)...)                        // dwFileDateMS
+	b = append(b, u32(0x00000000)...)                        // dwFileDateLS
 	return b
 }
 

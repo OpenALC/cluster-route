@@ -1,0 +1,291 @@
+# =============================================================================
+# Cluster Route — 持续集成
+#
+# 触发:
+#   - push 到任意分支(含 main)
+#   - pull_request
+#   - workflow_call: 供 release.yml 调用, 保证「CI 通过才发布」
+#
+# 平台范围: 仅 Windows 与 Linux(x64)。不构建 macOS 产物。
+#
+# 四个 job:
+#   checks   代码质量: gofmt / go vet / 单元测试(含 -race) / 前端类型检查
+#   e2e      端到端: 真实无头二进制 + 假上游, 校验转发/压缩/统计/密钥持久化
+#   linux    桌面应用构建(WebKit2GTK 4.1) + 链接库校验
+#   windows  桌面应用构建 + VERSIONINFO 修补 + NSIS 安装包
+#
+# 改此文件前必读:
+#   1. 前端必须先构建: 根包用 //go:embed all:web/dist, 缺失时 go build 直接失败。
+#   2. Linux 桌面构建必须带 `-tags webkit2_41`: Wails v2 默认链接
+#      webkit2gtk-4.0 + libsoup-2.4, 而 ubuntu-24.04 只提供 4.1。
+#   3. 无头服务用 CGO_ENABLED=0 全静态, 不依赖 GTK/WebKit, 因此 e2e 用它。
+#   4. Windows 的 VERSIONINFO 必须在 NSIS 打包之前修补, 打包对象是已修补的 exe。
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.25'
+  NODE_VERSION: '22'
+  WAILS_VERSION: v2.16.0
+
+jobs:
+  # ===========================================================================
+  # 代码质量与单元测试
+  # ===========================================================================
+  checks:
+    name: 'Checks · fmt / vet / test / typecheck'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # 根包 embed web/dist, 任何 go 命令前都必须先有前端产物
+      - name: Build frontend
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Frontend typecheck
+        working-directory: web
+        run: npx vue-tsc --noEmit
+
+      - name: Check gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l . | grep -v '^web/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "::error::以下文件未通过 gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build (headless)
+        env:
+          CGO_ENABLED: '0'
+        run: go build -trimpath -o /tmp/cluster-route-server .
+
+      - name: Unit tests (with race detector)
+        run: go test ./... -race -count=1 -timeout=10m
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/*.out
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ===========================================================================
+  # 端到端: 真实二进制 + 假上游
+  # ===========================================================================
+  e2e:
+    name: 'E2E · 转发 / 压缩 / 统计 / 密钥持久化'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build headless server
+        env:
+          CGO_ENABLED: '0'
+        run: go build -trimpath -o /tmp/cluster-route-server .
+
+      - name: Run smoke test
+        run: python3 -I scripts/e2e-smoke.py /tmp/cluster-route-server
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-logs
+          path: |
+            /tmp/cr-e2e-*/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ===========================================================================
+  # Linux 桌面应用
+  # ===========================================================================
+  linux:
+    name: 'Linux · desktop build'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Put Go bin on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install GTK / WebKit toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config build-essential nasm \
+            libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+
+      - name: Build frontend
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build desktop app
+        run: |
+          set -euo pipefail
+          wails build -skipbindings -s -clean -platform linux/amd64 -tags webkit2_41 \
+            -o "Cluster Route-linux-amd64"
+          ls -l build/bin/
+
+      # 断言链接了 4.1 而非 4.0: tag 写错时这里才会真正暴露
+      - name: Verify linked WebKit version
+        run: |
+          set -euo pipefail
+          deps=$(readelf -d "build/bin/Cluster Route-linux-amd64" \
+                 | awk '/NEEDED/ {gsub(/[][]/,"",$NF); print $NF}' | sort)
+          echo "$deps"
+          echo "$deps" | grep -q 'libwebkit2gtk-4.1' \
+            || { echo "::error::未链接 libwebkit2gtk-4.1"; exit 1; }
+          if echo "$deps" | grep -q 'libwebkit2gtk-4.0'; then
+            echo "::error::误链 libwebkit2gtk-4.0"; exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-desktop
+          path: build/bin/Cluster Route-linux-amd64
+          retention-days: 7
+
+  # ===========================================================================
+  # Windows 桌面应用
+  # ===========================================================================
+  windows:
+    name: 'Windows · desktop build'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Put Go bin on PATH
+        shell: bash
+        run: echo "$(go env GOPATH)\bin" >> "$GITHUB_PATH"
+
+      - name: Install Wails CLI
+        shell: bash
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+
+      - name: Build frontend
+        shell: bash
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build desktop app
+        shell: bash
+        run: |
+          set -euo pipefail
+          wails build -skipbindings -s -clean
+          ls -l build/bin/
+
+      - name: Build headless server
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -trimpath -ldflags '-s -w' -o dist-win/cluster-route-server.exe .
+          go run ./tools/patchversion -exe dist-win/cluster-route-server.exe \
+                                      -original dist-win/cluster-route-server.exe
+
+      - name: Patch VERSIONINFO
+        shell: bash
+        run: go run ./tools/patchversion -exe 'build/bin/Cluster Route.exe'
+
+      # .NET 的 FileVersionInfo 是三个读取方里最严格的一个:
+      # Explorer 与 version.dll 能读不代表它能读。
+      - name: Verify VERSIONINFO
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($f in @('build\bin\Cluster Route.exe', 'dist-win\cluster-route-server.exe')) {
+            $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($f)
+            Write-Host "$f -> Company=$($vi.CompanyName) Product=$($vi.ProductName) FileVersion=$($vi.FileVersion)"
+            if ($vi.CompanyName -ne 'OpenALC') { throw "CompanyName 不是 OpenALC: $f" }
+            if (-not $vi.ProductName) { throw "ProductName 为空: $f" }
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop
+          path: |
+            build/bin/Cluster Route.exe
+            dist-win/cluster-route-server.exe
+          retention-days: 7

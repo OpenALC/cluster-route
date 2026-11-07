@@ -30,22 +30,32 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 # --- toolchain --------------------------------------------------------------
-function Resolve-Tool([string]$Name, [string[]]$ExtraDirs) {
+function Resolve-Tool([string]$Name, [string[]]$ExtraDirs, [string]$Hint) {
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
     foreach ($d in $ExtraDirs) {
         $p = Join-Path $d "$Name.exe"
         if (Test-Path $p) { return $p }
     }
-    throw "Tool not found: $Name (install it and add to PATH)"
+    $msg = "Tool not found: $Name"
+    if ($Hint) { $msg += ". $Hint" }
+    throw $msg
 }
 
-$go       = Resolve-Tool "go"       @("C:\devlopment\Tools\go\bin", "$env:USERPROFILE\go\bin", "C:\Program Files\Go\bin")
-$wails    = Resolve-Tool "wails"    @("$env:USERPROFILE\go\bin")
-$makensis = Resolve-Tool "makensis" @("C:\devlopment\Tools\NSIS", "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS")
+$go    = Resolve-Tool "go"    @("C:\devlopment\Tools\go\bin", "$env:USERPROFILE\go\bin", "C:\Program Files\Go\bin") `
+                            "Install Go (https://go.dev/dl/) and add it to PATH."
+$wails = Resolve-Tool "wails" @("$env:USERPROFILE\go\bin") `
+                            "Install the Wails CLI: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
 Write-Host "go       = $go"
 Write-Host "wails    = $wails"
-Write-Host "makensis = $makensis"
+
+# makensis is only needed for -Installer; do not require it otherwise.
+$makensis = $null
+if ($Installer) {
+    $makensis = Resolve-Tool "makensis" @("C:\devlopment\Tools\NSIS", "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS") `
+                                      "Install NSIS (https://nsis.sourceforge.io/) or omit -Installer."
+    Write-Host "makensis = $makensis"
+}
 
 $patchArgs  = @("run", "./tools/patchversion")
 $desktopExe = Join-Path $PSScriptRoot "build\bin\Cluster Route.exe"
@@ -91,13 +101,20 @@ if ($Installer) {
 
 # --- optional signing -------------------------------------------------------
 if ($Sign) {
+    $pfx = Join-Path $PSScriptRoot "build\OpenALC-codesign.pfx"
     $signtool = Get-Command signtool -ErrorAction SilentlyContinue
     if (-not $signtool) {
-        Write-Warning "signtool not found, skipping signing"
+        Write-Warning "signtool not found (install the Windows SDK), skipping signing"
+    } elseif (-not (Test-Path $pfx)) {
+        Write-Warning "signing certificate not found: $pfx, skipping signing"
     } else {
         $targets = @($desktopExe)
         if ($Installer) { $targets += (Join-Path $PSScriptRoot "build\bin\Cluster Route-amd64-installer.exe") }
-        & $signtool @("sign", "/f", "build\OpenALC-codesign.pfx", "/p", "OpenALC", "/fd", "SHA256") + $targets
+        # 注意: PowerShell 不会把 `@(...) + $targets` 当作数组拼接, 必须分开赋值,
+        # 否则 signtool 收到的是 "Object[]", "+", "Object[]" 三个参数。
+        $signArgs = @("sign", "/f", $pfx, "/p", "OpenALC", "/fd", "SHA256") + $targets
+        & $signtool @signArgs
+        if ($LASTEXITCODE -ne 0) { Write-Warning "signtool failed (exit $LASTEXITCODE)" }
     }
 }
 
