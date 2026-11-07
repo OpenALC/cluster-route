@@ -563,6 +563,13 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release 已存在, 追加/覆盖上传"
             gh release upload "$GITHUB_REF_NAME" $FILES --clobber
+            # 若已存在的是草稿(例如删 tag 重建后残留的孤儿 release),
+            # 必须显式发布, 否则外部永远看不到。gh release view 对草稿
+            # 同样返回成功, 只看它是否成功无法区分。
+            if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true" ]; then
+              echo "检测到草稿 Release, 转为正式发布"
+              gh release edit "$GITHUB_REF_NAME" --draft=false
+            fi
           else
             # 含连字符的版本号(如 0.4.0-preview.1)按语义化版本规范自动标记为预发布。
             # 也可在 workflow_dispatch 里显式指定 prerelease 输入。
