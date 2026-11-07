@@ -106,6 +106,15 @@ jobs:
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
 
+      # Go 源码里的版本常量是界面与 /admin/version 的唯一来源, 必须与 tag
+      # 同步, 否则发行版会自称上一个版本(如 0.3.3)。
+      - name: Stamp version into Go sources
+        run: |
+          set -euo pipefail
+          sed -i "s/^const version = \".*\"/const version = \"${VERSION}\"/" \
+            main_desktop.go main_server.go
+          grep -H '^const version' main_desktop.go main_server.go
+
       # Wails v2 在 Linux 需要 pkg-config/build-essential/nasm 与 GTK3、
       # WebKit2GTK 头文件。装 4.1(而非 4.0) 以匹配 ubuntu-24.04。
       - name: Install GTK / WebKit toolchain
@@ -303,13 +312,29 @@ jobs:
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
 
+      # 与 Linux 侧一致: 源码常量必须与 tag 同步
+      - name: Stamp version into Go sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i "s/^const version = \".*\"/const version = \"${VERSION}\"/" \
+            main_desktop.go main_server.go
+          grep -H '^const version' main_desktop.go main_server.go
+
       # 版本号唯一来源是 tag: 改写 info.json, 让 go-winres / patchversion /
-      # NSIS 的 VI* 版本栏读到同一个版本
+      # NSIS 的 VI* 版本栏读到同一个版本。
+      # 注意: VERSIONINFO 的 fixed 字段必须是四段纯数字, 预发布版本
+      # (0.4.0-preview.1) 必须剥掉连字符后缀, 展示用字符串才带后缀。
       - name: Stamp version into build/windows/info.json
         shell: bash
         run: |
           set -euo pipefail
-          jq --arg v "$VERSION" --arg f "$VERSION.0" \
+          NUM="${VERSION%%-*}"
+          if ! echo "$NUM" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::版本号 '$VERSION' 无法拆出三段数字(期望形如 0.4.0 或 0.4.0-preview.1)"
+            exit 1
+          fi
+          jq --arg v "$VERSION" --arg f "$NUM.0" \
             '.fixed.file_version      = $f
              | .fixed.product_version = $f
              | .info["0000"].ProductVersion = $v' \
