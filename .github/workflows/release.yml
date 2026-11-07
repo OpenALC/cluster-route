@@ -484,11 +484,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Collect all artifacts
+      # 只取发布用的两个产物集。CI gate 是复用工作流, 它的 artifacts
+      # (linux-desktop / windows-desktop, 含 build/ 与 dist-win/ 目录结构)
+      # 也会出现在本 run 里; 不限定 pattern 会让 merge-multiple 把目录一起
+      # 摊平到 artifacts/, 导致后面的 sha256sum 撞上目录而失败。
+      - name: Collect release artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: '*-packages'
           path: artifacts
           merge-multiple: true
+
+      - name: Show collected artifacts
+        run: ls -lh artifacts/
 
       - name: Resolve version
         id: ver
@@ -513,7 +521,10 @@ jobs:
           set -euo pipefail
           cd artifacts
           rm -f SHA256SUMS.txt
-          sha256sum -- * > SHA256SUMS.txt
+          # 只对普通文件求和: 即便误拉了目录也不会中断(上面的 pattern
+          # 已限定产物集, 这里再兜一层)。
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' \
+            | sort | xargs -r sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Publish release
