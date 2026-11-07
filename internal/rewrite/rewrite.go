@@ -49,8 +49,12 @@ func Extract(body []byte, format, mainMarker string) BodyInfo {
 	if v, ok := root["stream"]; ok {
 		_ = json.Unmarshal(v, &info.Stream)
 	}
-	if raw, ok := root["tools"]; ok && len(raw) > 2 && !bytes.Equal(raw, []byte("null")) {
-		info.HasTools = true
+	// 语义判定而非字节长度: 空白/空数组不应被当作"含工具"
+	if raw, ok := root["tools"]; ok && len(raw) > 0 {
+		var tools []json.RawMessage
+		if json.Unmarshal(raw, &tools) == nil {
+			info.HasTools = len(tools) > 0
+		}
 	}
 	if raw, ok := root["messages"]; ok {
 		var msgs []json.RawMessage
@@ -224,7 +228,7 @@ func BuildUpstreamBody(body []byte, info *BodyInfo, targetModel, format string,
 	}
 
 	if format == "openai" && info.Stream && injectUsage && !hasIncludeUsage(root) {
-		root["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		root["stream_options"] = withIncludeUsage(root["stream_options"])
 		changed = true
 	}
 
@@ -249,6 +253,21 @@ func BuildUpstreamBody(body []byte, info *BodyInfo, targetModel, format string,
 		return body, false, err
 	}
 	return out, true, nil
+}
+
+// withIncludeUsage 在既有 stream_options 上补开 include_usage, 保留其它字段;
+// 原值为空/非对象时重建。
+func withIncludeUsage(raw json.RawMessage) json.RawMessage {
+	opts := map[string]json.RawMessage{}
+	if len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(raw, &m) == nil && m != nil {
+			opts = m
+		}
+	}
+	opts["include_usage"] = json.RawMessage(`true`)
+	b, _ := json.Marshal(opts)
+	return b
 }
 
 func hasIncludeUsage(root map[string]json.RawMessage) bool {

@@ -17,6 +17,7 @@ type Recorder struct {
 	dropped chan struct{} // 容量信号, 非阻塞丢弃计数
 	store   *store.Store
 	pricer  *pricing.Pricer
+	done    chan struct{} // Run 退出(含最后一次落盘)后关闭
 
 	mu        sync.Mutex
 	dropCount int64
@@ -33,8 +34,12 @@ func New(st *store.Store, pr *pricing.Pricer, queueCap int) *Recorder {
 		dropped: make(chan struct{}, queueCap),
 		store:   st,
 		pricer:  pr,
+		done:    make(chan struct{}),
 	}
 }
+
+// Done 在 Run 完成最后一次落盘后关闭; 停机时先用它同步, 再关数据库。
+func (r *Recorder) Done() <-chan struct{} { return r.done }
 
 // Submit 非阻塞投递; 队列满时丢弃(本地统计可容忍, 避免拖慢转发)。
 func (r *Recorder) Submit(rec store.Record) {
@@ -50,11 +55,15 @@ func (r *Recorder) Submit(rec store.Record) {
 
 // Run 后台批量落库循环: 每 500 条或每秒 flush 一次。
 func (r *Recorder) Run(stop <-chan struct{}) {
+	defer close(r.done)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stop:
+			// 先把队列中尚未消费的记录取出, 再落盘: 否则停机瞬间仍在
+			// channel 内的记录会被静默丢弃(转发已经返回, 用户看不到任何提示)。
+			r.drain()
 			r.flush()
 			return
 		case rec := <-r.ch:
@@ -82,6 +91,18 @@ func (r *Recorder) push(rec store.Record) {
 	r.mu.Unlock()
 }
 
+// drain 取出 channel 中剩余的记录(停机路径使用)。
+func (r *Recorder) drain() {
+	for {
+		select {
+		case rec := <-r.ch:
+			r.push(rec)
+		default:
+			return
+		}
+	}
+}
+
 func (r *Recorder) flush() {
 	r.mu.Lock()
 	b := r.batch
@@ -100,4 +121,10 @@ func (r *Recorder) Dropped() int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.dropCount
+}
+
+// Flush 同步落盘当前批次(含通道中已投递但未被 Run 消费的记录)。
+func (r *Recorder) Flush() {
+	r.drain()
+	r.flush()
 }

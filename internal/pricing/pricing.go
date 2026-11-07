@@ -138,11 +138,11 @@ func (p *Pricer) List() ([]store.Price, error) { return p.store.ListPrices() }
 type ccPricing struct {
 	Version int `json:"version"`
 	Models  []struct {
-		ModelID                  string `json:"modelId"`
-		DisplayName              string `json:"displayName"`
-		InputCostPerMillion      string `json:"inputCostPerMillion"`
-		OutputCostPerMillion     string `json:"outputCostPerMillion"`
-		CacheReadCostPerMillion  string `json:"cacheReadCostPerMillion"`
+		ModelID                     string `json:"modelId"`
+		DisplayName                 string `json:"displayName"`
+		InputCostPerMillion         string `json:"inputCostPerMillion"`
+		OutputCostPerMillion        string `json:"outputCostPerMillion"`
+		CacheReadCostPerMillion     string `json:"cacheReadCostPerMillion"`
 		CacheCreationCostPerMillion string `json:"cacheCreationCostPerMillion"`
 	} `json:"models"`
 }

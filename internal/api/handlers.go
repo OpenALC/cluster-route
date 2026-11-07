@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,32 +70,49 @@ func (h *handlers) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"totals":       totals,
-		"by_provider":  must(h, w, "provider_name", start),
-		"by_model":     must(h, w, "model", start),
-		"by_channel":   must(h, w, "channel", start),
+		"totals":        totals,
+		"by_provider":   must(h, w, "provider_name", start),
+		"by_model":      must(h, w, "model", start),
+		"by_channel":    must(h, w, "channel", start),
 		"stats_dropped": h.Recorder.Dropped(),
 	})
 }
 
 func must(h *handlers, w http.ResponseWriter, by string, start int64) []store.GroupAgg {
 	g, err := h.Store.GroupBy(start, by)
-	if err != nil || g == nil {
-		if g == nil {
-			g = []store.GroupAgg{}
-		}
+	if err != nil {
+		log.Printf("[admin] 聚合查询失败(%s): %v", by, err)
+		return []store.GroupAgg{}
+	}
+	if g == nil {
+		return []store.GroupAgg{}
 	}
 	return g
 }
 
 func (h *handlers) series(w http.ResponseWriter, r *http.Request) {
-	start := rangeStart(r.URL.Query().Get("range"))
+	q := r.URL.Query()
+	start := rangeStart(q.Get("range"))
 	bucket := int64(3600)
-	switch r.URL.Query().Get("bucket") {
+	switch q.Get("bucket") {
 	case "day":
 		bucket = 86400
 	case "week":
 		bucket = 7 * 86400
+	}
+	// 有界范围 + 天级桶时优先读永久聚合表: 请求明细只保留 retention_days 天,
+	// 若用户把保留期调到 30 天以下, 「30天」趋势会缺口, 而 daily_stats 永久保留。
+	// 注意两点:
+	//  1. daily_stats 只能按天回答, 不能用于按小时分桶的 24h 视图;
+	//  2. 「全部」(start=0) 仍走明细, 保证趋势图与上方汇总卡片来自同一窗口,
+	//     否则卡片(明细, 90 天)与曲线(聚合, 永久)会给出互相矛盾的数字。
+	if start > 0 && bucket >= 86400 {
+		if daily, err := h.Store.TimeseriesDaily(); err == nil {
+			if pts := filterSince(daily, start); len(pts) > 0 {
+				writeJSON(w, 200, pts)
+				return
+			}
+		}
 	}
 	pts, err := h.Store.Timeseries(start, bucket)
 	if err != nil {
@@ -105,6 +123,17 @@ func (h *handlers) series(w http.ResponseWriter, r *http.Request) {
 		pts = []store.Point{}
 	}
 	writeJSON(w, 200, pts)
+}
+
+// filterSince 过滤掉 start 之前的点(start<=0 表示全部)。
+func filterSince(pts []store.Point, start int64) []store.Point {
+	out := make([]store.Point, 0, len(pts))
+	for _, p := range pts {
+		if start <= 0 || p.Bucket >= start {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (h *handlers) group(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +406,16 @@ func (h *handlers) putRoutes(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) getSettings(w http.ResponseWriter, r *http.Request) {
 	s := h.Mgr.Settings()
 	s.RouterKeyEnc = "" // 不回传密文
+	// 切片不得为 null: 前端拿到 null 后 push/splice 会直接抛 TypeError。
+	if s.Lightweight.Targets == nil {
+		s.Lightweight.Targets = []config.Target{}
+	}
+	if s.Lightweight.Aliases == nil {
+		s.Lightweight.Aliases = []string{}
+	}
+	if s.Failover.Targets == nil {
+		s.Failover.Targets = []config.Target{}
+	}
 	writeJSON(w, 200, s)
 }
 
@@ -388,8 +427,12 @@ func (h *handlers) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	in.RouterKeyEnc = "" // 防止经此接口改密钥
 	if err := h.Mgr.UpdateSettings(func(cur *config.Settings) {
-		port := cur.Port
+		// 服务端管理字段以存量为准: 前端回传的是脱敏快照(router_key_enc 为空),
+		// 若整体覆盖会把密钥密文抹成空串, 导致下次启动重新生成 sk-cr 密钥、
+		// 客户端里已配置的密钥全部失效。密钥只能经 rotate 接口轮换。
+		port, keyEnc := cur.Port, cur.RouterKeyEnc
 		*cur = in
+		cur.RouterKeyEnc = keyEnc
 		if in.Port == 0 {
 			cur.Port = port
 		}

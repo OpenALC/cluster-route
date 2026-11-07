@@ -4,6 +4,9 @@ package proxy
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -20,8 +23,8 @@ import (
 
 	"cluster-route/internal/archive"
 	"cluster-route/internal/config"
-	"cluster-route/internal/routing"
 	"cluster-route/internal/rewrite"
+	"cluster-route/internal/routing"
 	"cluster-route/internal/stats"
 	"cluster-route/internal/store"
 )
@@ -36,16 +39,27 @@ type Handler struct {
 	archiveSvc *archive.Service
 
 	tpl     *http.Transport
-	clients sync.Map // providerID -> *http.Client
+	clients sync.Map // providerID -> *clientEntry
+
+	// respLimitBytes 非流式上游响应体上限, 默认 maxBodyBytes; 测试可调小。
+	respLimitBytes int64
+}
+
+// clientEntry 缓存的客户端及其创建时的超时配置。
+// 供应商超时可被用户随时修改, 缓存必须能感知并重建。
+type clientEntry struct {
+	client     *http.Client
+	timeoutSec int
 }
 
 // New 创建处理器。
 func New(mgr *config.Manager, eng *routing.Engine, rec *stats.Recorder, arch *archive.Service) *Handler {
 	return &Handler{
-		mgr:        mgr,
-		engine:     eng,
-		recorder:   rec,
-		archiveSvc: arch,
+		mgr:            mgr,
+		engine:         eng,
+		recorder:       rec,
+		archiveSvc:     arch,
+		respLimitBytes: maxBodyBytes,
 		tpl: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -89,18 +103,47 @@ func extractKey(r *http.Request) string {
 
 // clientFor 按供应商缓存 http.Client(独立响应头超时)。
 func (h *Handler) clientFor(p config.Provider) *http.Client {
-	if c, ok := h.clients.Load(p.ID); ok {
-		return c.(*http.Client)
+	for {
+		if v, ok := h.clients.Load(p.ID); ok {
+			e := v.(*clientEntry)
+			if e.timeoutSec == p.TimeoutSec {
+				return e.client
+			}
+			ne := h.newClientEntry(p)
+			// 仅当缓存仍是刚才读到的过期条目时才替换, 避免覆盖其他 goroutine 写入的新条目。
+			if h.clients.CompareAndSwap(p.ID, e, ne) {
+				e.closeIdle()
+				return ne.client
+			}
+			// 竞争失败: 丢弃本次自建的连接池, 回到循环按最新缓存重新判定。
+			ne.closeIdle()
+			continue
+		}
+		ne := h.newClientEntry(p)
+		if _, loaded := h.clients.LoadOrStore(p.ID, ne); !loaded {
+			return ne.client
+		}
+		// 其他 goroutine 抢先写入: 自建条目不再使用, 关闭其空闲连接后重新判定。
+		ne.closeIdle()
 	}
+}
+
+// newClientEntry 依供应商超时创建新的客户端条目。
+func (h *Handler) newClientEntry(p config.Provider) *clientEntry {
 	tr := h.tpl.Clone()
 	timeout := time.Duration(p.TimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 600 * time.Second
 	}
 	tr.ResponseHeaderTimeout = timeout
-	c := &http.Client{Transport: tr}
-	actual, _ := h.clients.LoadOrStore(p.ID, c)
-	return actual.(*http.Client)
+	return &clientEntry{client: &http.Client{Transport: tr}, timeoutSec: p.TimeoutSec}
+}
+
+// closeIdle 释放该条目连接池中的空闲连接。
+func (e *clientEntry) closeIdle() {
+	if tr, ok := e.client.Transport.(*http.Transport); ok {
+		tr.CloseIdleConnections()
+	}
 }
 
 func joinURL(base, path string) string {
@@ -233,32 +276,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ttfb := time.Since(start).Milliseconds()
 
-	// 透传响应头
-	for k, vv := range resp.Header {
-		if isHopHeader(k) {
-			continue
-		}
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-	w.Header().Del("Content-Length")
+	// 上游可能无视 Accept-Encoding: identity 仍返回压缩体。统计解析依赖明文,
+	// 因此先解压再走后续管线; 解压失败时保留原响应头与内容, 保证客户端至少能用。
+	upBody := decompressBody(resp)
 
 	usage := Usage{}
 	var errMsg string
 	statusOK := resp.StatusCode >= 200 && resp.StatusCode < 300
 
 	if isSSE(resp) {
+		// 流式先写头以尽快开流
+		copyRespHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		flusher, _ := w.(http.Flusher)
 		parser := NewSSEParser(format)
 		buf := make([]byte, 16<<10)
 		for {
-			n, readErr := resp.Body.Read(buf)
+			n, readErr := upBody.Read(buf)
 			if n > 0 {
 				parser.FeedChunk(buf[:n])
 				if _, werr := w.Write(buf[:n]); werr != nil {
-					break // 客户端断开
+					break // 客户端断开, 停止读取上游
 				}
 				if flusher != nil {
 					flusher.Flush()
@@ -271,10 +309,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		usage = parser.Usage()
 		errMsg = parser.ErrMsg()
 	} else {
-		rb, rerr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-		if rerr == nil {
-			usage = ParseNonStream(rb, format)
+		// 非流式先读完再写头: 超限或读取失败时可返回完整错误而非半截内容,
+		// 也不会残留上游的 Content-Encoding/Content-Length 头。
+		limit := h.respLimitBytes
+		if limit <= 0 {
+			limit = maxBodyBytes
 		}
+		rb, rerr := io.ReadAll(io.LimitReader(upBody, limit+1))
+		switch {
+		case rerr != nil:
+			errMsg = "读取上游响应失败: " + rerr.Error()
+			h.record(body, &info, dec, s, trace, used.Provider.Name, format, resp.StatusCode,
+				Usage{}, false, ttfb, time.Since(start).Milliseconds(), errMsg)
+			writeErr(w, format, http.StatusBadGateway, "cluster-route: "+errMsg)
+			return
+		case int64(len(rb)) > limit:
+			errMsg = "上游响应超过 32MB 上限"
+			h.record(body, &info, dec, s, trace, used.Provider.Name, format, resp.StatusCode,
+				Usage{}, false, ttfb, time.Since(start).Milliseconds(), errMsg)
+			writeErr(w, format, http.StatusBadGateway, "cluster-route: "+errMsg)
+			return
+		}
+		usage = ParseNonStream(rb, format)
+		copyRespHeaders(w, resp)
 		w.Header().Set("Content-Length", strconv.Itoa(len(rb)))
 		w.WriteHeader(resp.StatusCode)
 		w.Write(rb)
@@ -282,6 +339,96 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h.record(body, &info, dec, s, trace, used.Provider.Name, format, resp.StatusCode,
 		usage, statusOK && errMsg == "", ttfb, time.Since(start).Milliseconds(), errMsg)
+}
+
+// copyRespHeaders 透传上游响应头(跳过逐跳头); Content-Encoding 已在
+// decompressBody 中按能否解码决定删除或保留。
+func copyRespHeaders(w http.ResponseWriter, resp *http.Response) {
+	for k, vv := range resp.Header {
+		if isHopHeader(k) {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.Header().Del("Content-Length")
+}
+
+// decompressBody 按上游 Content-Encoding 包装响应体, 使读取方拿到明文。
+// 成功解压时删除 Content-Encoding/Content-Length(长度由调用方重算);
+// 无法解码的编码原样保留并告警, 避免把二进制噪音当成明文解析。
+func decompressBody(resp *http.Response) io.Reader {
+	enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+	var (
+		zr  io.Reader
+		err error
+	)
+	switch enc {
+	case "", "identity":
+		return resp.Body
+	case "gzip", "x-gzip":
+		rec := &prefixRecorder{r: resp.Body, max: 64 << 10}
+		zr, err = gzip.NewReader(rec)
+		if err != nil {
+			log.Printf("[proxy] 警告: 上游声明 gzip 但解压失败: %v, 原样透传", err)
+			return rec.replay()
+		}
+		rec.disable() // 解压成功, 无需再为回放保留前缀
+	case "deflate":
+		rec := &prefixRecorder{r: resp.Body, max: 64 << 10}
+		zr, err = zlib.NewReader(rec)
+		if err != nil {
+			// HTTP 的 "deflate" 历史上两种写法都有: RFC 规定 zlib 封装,
+			// 但不少服务端实际发送裸 DEFLATE。zlib 头校验失败时按裸流重试。
+			// 注意必须用 replay(): zlib.NewReader 可能已从底层读走若干字节,
+			// 直接用 resp.Body 会把开头那段丢掉。
+			log.Printf("[proxy] 提示: 上游 deflate 非 zlib 封装, 按裸 DEFLATE 重试: %v", err)
+			zr = flate.NewReader(rec.replay())
+		} else {
+			rec.disable()
+		}
+	default:
+		log.Printf("[proxy] 警告: 上游返回不支持的压缩编码 %q, 原样透传(用量统计可能为 0)", enc)
+		return resp.Body
+	}
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Content-Length")
+	return zr
+}
+
+// prefixRecorder 记录底层读取器的前 max 字节。
+// gzip/zlib 在头部校验失败前可能已从流中读走若干字节, 直接丢弃解压器会丢数据;
+// 记录后回放, 保证原样透传时内容完整。
+type prefixRecorder struct {
+	r   io.Reader
+	buf bytes.Buffer
+	max int
+}
+
+func (p *prefixRecorder) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if p.max <= 0 {
+		return n, err
+	}
+	if n > 0 && p.buf.Len() < p.max {
+		room := p.max - p.buf.Len()
+		if n < room {
+			room = n
+		}
+		p.buf.Write(b[:room])
+	}
+	return n, err
+}
+
+// disable 停止记录前缀(解压成功后不再需要回放)。
+func (p *prefixRecorder) disable() { p.max = 0; p.buf.Reset() }
+
+// replay 返回已记录前缀与剩余流的拼接。
+// 注意这里刻意引用 p.r(原始底层读取器)而非任何解压器: 在 gzip/zlib 头校验
+// 失败的场景里, 前缀正是被那个失败的解压器读走的字节, 剩余流应当从底层继续。
+func (p *prefixRecorder) replay() io.Reader {
+	return io.MultiReader(bytes.NewReader(p.buf.Bytes()), p.r)
 }
 
 // shouldFailover 判定是否切换下一目标。
@@ -322,12 +469,15 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, t routing.Target, body [
 		req.ContentLength = int64(len(body))
 		req.Header.Set("Content-Type", "application/json")
 	}
-	// 透传关键头
-	for _, hk := range []string{"Accept", "Accept-Encoding", "Anthropic-Beta", "Anthropic-Version"} {
+	// 透传关键头。不包含 Accept-Encoding: 本地中转的用量统计依赖明文响应,
+	// 且显式设置该头会让 Transport 放弃自动解压, 行为容易产生歧义。
+	for _, hk := range []string{"Accept", "Anthropic-Beta", "Anthropic-Version"} {
 		if v := r.Header.Get(hk); v != "" {
 			req.Header.Set(hk, v)
 		}
 	}
+	// 固定要求明文: 与 Transport 的自动解压互不干扰, 响应侧另有解压兜底。
+	req.Header.Set("Accept-Encoding", "identity")
 	if format == "anthropic" {
 		if req.Header.Get("Anthropic-Version") == "" {
 			req.Header.Set("Anthropic-Version", "2023-06-01")

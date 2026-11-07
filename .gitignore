@@ -8,11 +8,14 @@ web/node_modules/
 # --- 编译 / 打包产物(可重新生成) ---
 *.exe
 *.log
+*.syso
 web/dist/
+/out/
 
 # --- 发布流水线的中间产物(CI 或本地复现) ---
 /dist-linux/
 /dist-win/
+/dist-mac/
 /stage/
 /artifacts/
 

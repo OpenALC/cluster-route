@@ -16,27 +16,27 @@ import (
 
 // Record 一次请求的统计记录(cost 由调用方按定价计算)。
 type Record struct {
-	Ts          int64  `json:"ts"`
-	ProviderID  string `json:"provider_id"`
-	ProviderNam string `json:"provider_name"`
-	Model       string `json:"model"` // 客户端请求的别名
-	Upstream    string `json:"upstream_model"`
-	Channel     string `json:"channel"` // main|lightweight|subagent|default
-	Format      string `json:"format"`  // anthropic|openai
-	Stream      bool   `json:"stream"`
-	Status      int    `json:"status"`
-	OK          bool   `json:"ok"`
-	Input       int64  `json:"input_tokens"`
-	CacheRead   int64  `json:"cache_read_tokens"`
-	CacheCreate int64  `json:"cache_creation_tokens"`
-	Output      int64  `json:"output_tokens"`
+	Ts          int64   `json:"ts"`
+	ProviderID  string  `json:"provider_id"`
+	ProviderNam string  `json:"provider_name"`
+	Model       string  `json:"model"` // 客户端请求的别名
+	Upstream    string  `json:"upstream_model"`
+	Channel     string  `json:"channel"` // main|lightweight|subagent|default
+	Format      string  `json:"format"`  // anthropic|openai
+	Stream      bool    `json:"stream"`
+	Status      int     `json:"status"`
+	OK          bool    `json:"ok"`
+	Input       int64   `json:"input_tokens"`
+	CacheRead   int64   `json:"cache_read_tokens"`
+	CacheCreate int64   `json:"cache_creation_tokens"`
+	Output      int64   `json:"output_tokens"`
 	Cost        float64 `json:"cost"`
-	DurationMs  int64  `json:"duration_ms"`
-	TTFBMs      int64  `json:"ttfb_ms"`
-	Failover    string `json:"failover"` // 尝试轨迹 JSON
-	Err         string `json:"err"`
-	Project     string `json:"project"`
-	SessionKey  string `json:"session_key"`
+	DurationMs  int64   `json:"duration_ms"`
+	TTFBMs      int64   `json:"ttfb_ms"`
+	Failover    string  `json:"failover"` // 尝试轨迹 JSON
+	Err         string  `json:"err"`
+	Project     string  `json:"project"`
+	SessionKey  string  `json:"session_key"`
 }
 
 // Totals 汇总卡片数据。
@@ -106,13 +106,13 @@ type SnapshotRow struct {
 // Tier 峰/谷档位: enabled 时按时段计价。
 // Mode: "absolute" 直接使用四项单价; "multiplier" 按 Rate × 平价四项。
 type Tier struct {
-	Enabled bool    `json:"enabled"`
-	Start   string  `json:"start"`            // "HH:MM" 含
-	End     string  `json:"end"`              // "HH:MM" 不含; 支持跨午夜(start>end)
-	Mode    string  `json:"mode"`             // absolute | multiplier
-	Rate    float64 `json:"rate,omitempty"`   // multiplier 模式倍率
-	Input   float64 `json:"input,omitempty"`  // absolute 模式四项单价
-	Output  float64 `json:"output,omitempty"`
+	Enabled       bool    `json:"enabled"`
+	Start         string  `json:"start"`           // "HH:MM" 含
+	End           string  `json:"end"`             // "HH:MM" 不含; 支持跨午夜(start>end)
+	Mode          string  `json:"mode"`            // absolute | multiplier
+	Rate          float64 `json:"rate,omitempty"`  // multiplier 模式倍率
+	Input         float64 `json:"input,omitempty"` // absolute 模式四项单价
+	Output        float64 `json:"output,omitempty"`
 	CacheRead     float64 `json:"cache_read,omitempty"`
 	CacheCreation float64 `json:"cache_creation,omitempty"`
 }
@@ -381,6 +381,35 @@ func (s *Store) Timeseries(startTs, bucketSec int64) ([]Point, error) {
 			&p.Output, &p.Cost); err != nil {
 			return nil, err
 		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// TimeseriesDaily 从 daily_stats 读取天级时间序列(不受请求明细保留期限制)。
+// daily_stats 与 requests 在同一次事务内写入, 明细被 janitor 清理后历史趋势仍然保留。
+func (s *Store) TimeseriesDaily() ([]Point, error) {
+	rows, err := s.db.Query(`SELECT day, COALESCE(SUM(requests),0), COALESCE(SUM(input_tokens),0),
+		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0),
+		COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost),0)
+		FROM daily_stats GROUP BY day ORDER BY day`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Point
+	for rows.Next() {
+		var day string
+		var p Point
+		if err := rows.Scan(&day, &p.Requests, &p.Input, &p.CacheRead, &p.CacheCreate,
+			&p.Output, &p.Cost); err != nil {
+			return nil, err
+		}
+		t, err := time.ParseInLocation("2006-01-02", day, time.Local)
+		if err != nil {
+			continue
+		}
+		p.Bucket = t.Unix()
 		out = append(out, p)
 	}
 	return out, rows.Err()
