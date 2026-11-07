@@ -417,10 +417,16 @@ jobs:
           [ -n "$MAKENSIS" ] || { echo "::error::找不到 makensis"; exit 1; }
           echo "makensis = $MAKENSIS"
 
-          # INFO_PRODUCTVERSION 在 wails_tools.nsh 中以 !ifndef 保护, 可注入
+          # INFO_PRODUCTVERSION 在 wails_tools.nsh 中以 !ifndef 保护, 可注入。
+          # VIProductVersion / VIFileVersion 必须是四段数字, 故预发布版本
+          # (0.4.0-preview.1) 另传一个剥掉后缀的 INFO_PRODUCTVERSION_NUM;
+          # 展示字段 DisplayVersion / ProductVersion 仍用完整版本号。
+          VER_NUM="${VERSION%%-*}"
+          echo "NSIS 数字版本: $VER_NUM / 展示版本: $VERSION"
           pushd build/windows/installer
           "$MAKENSIS" \
             -DINFO_PRODUCTVERSION="$VERSION" \
+            -DINFO_PRODUCTVERSION_NUM="$VER_NUM" \
             -DARG_WAILS_AMD64_BINARY='..\..\bin\Cluster Route.exe' \
             project.nsi
           popd

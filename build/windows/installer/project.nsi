@@ -42,9 +42,15 @@ Unicode true
 !define INFO_PROJECTNAME "Cluster Route"
 !include "wails_tools.nsh"
 
-# The version information for this two must consist of 4 parts
-VIProductVersion "${INFO_PRODUCTVERSION}.0"
-VIFileVersion    "${INFO_PRODUCTVERSION}.0"
+# VIProductVersion / VIFileVersion require exactly 4 numeric parts, so a
+# prerelease tag (e.g. 0.4.0-preview.1) must pass the numeric part only.
+# INFO_PRODUCTVERSION still carries the full version for display fields.
+# NOTE: keep this file ASCII-only - makensis (ACP mode) rejects UTF-8 here.
+!ifndef INFO_PRODUCTVERSION_NUM
+    !define INFO_PRODUCTVERSION_NUM "${INFO_PRODUCTVERSION}"
+!endif
+VIProductVersion "${INFO_PRODUCTVERSION_NUM}.0"
+VIFileVersion    "${INFO_PRODUCTVERSION_NUM}.0"
 
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
 VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
