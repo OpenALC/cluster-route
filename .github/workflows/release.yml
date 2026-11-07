@@ -447,10 +447,24 @@ jobs:
           # 占位, 保证空 data/ 能进 zip(便携模式的默认数据目录)
           printf 'Cluster Route portable data directory.\n' > "$P/data/.keep"
 
-          # tar 自带 zip 支持, 不需额外装压缩工具
-          tar -a -c -f "dist-win/Cluster-Route-${VERSION}-x64-Portable.zip" \
-              -C dist-win "Cluster-Route-${VERSION}-x64-Portable"
-          ls -l dist-win/
+      # 用 PowerShell 的 Compress-Archive 生成真正的 zip。
+      # 此前用 `tar -a -c`: Git Bash 里的 GNU tar 不认 -a 的扩展名推断,
+      # 产出的是 tar 归档却命名为 .zip, 用户双击解压会失败。
+      - name: Compress portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = "dist-win/Cluster-Route-${env:VERSION}-x64-Portable"
+          $zip = "$src.zip"
+          Remove-Item -Force $zip -ErrorAction SilentlyContinue
+          Compress-Archive -Path $src -DestinationPath $zip
+          $item = Get-Item $zip
+          Write-Host "$($item.Name)  $($item.Length) bytes"
+          # 断言确实是 zip(以 PK 开头), 防止再次产出 tar
+          $bytes = [System.IO.File]::ReadAllBytes($zip)[0..1]
+          if ($bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B) {
+            throw "产物不是 zip 格式: 前两字节为 $($bytes[0]),$($bytes[1])"
+          }
 
       - name: Rename installer for release
         shell: bash
