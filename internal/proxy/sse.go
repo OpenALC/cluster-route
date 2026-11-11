@@ -37,14 +37,59 @@ func (u *aUsage) cacheCreateTotal() int64 {
 	return 0
 }
 
-// openai usage 结构。
+// openai usage 结构。chat completions 用 prompt/completion_tokens;
+// responses API 用 input/output_tokens。两者的总量都包含 cached_tokens。
 type oUsage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
 	CompletionTokens    int64 `json:"completion_tokens"`
+	InputTokens         int64 `json:"input_tokens"`
+	OutputTokens        int64 `json:"output_tokens"`
 	PromptTokensDetails *struct {
 		CachedTokens int64 `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
-	CacheReadInputTokens int64 `json:"cache_read_input_tokens"` // 部分中转的 anthropic 风格字段
+	InputTokensDetails *struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+	CacheReadInputTokens int64 `json:"cache_read_input_tokens"` // 部分中转的 anthropic 风格字段, 不包含在总量里
+}
+
+// applyOpenAIUsage 把一帧 OpenAI/Responses 用量写入 dst。
+// 官方 cached_tokens 已含在 prompt_tokens/input_tokens 中, 必须从输入里扣掉,
+// 否则计价会按输入单价再乘一遍。cache_read_input_tokens 是中转附加字段, 语义与
+// Anthropic 相同(不含在总量里), 只记缓存读, 不从输入扣。
+func applyOpenAIUsage(dst *Usage, u *oUsage) {
+	if u == nil {
+		return
+	}
+	in, hasIn := u.PromptTokens, u.PromptTokens > 0
+	if !hasIn && u.InputTokens > 0 {
+		in, hasIn = u.InputTokens, true
+	}
+	out, hasOut := u.CompletionTokens, u.CompletionTokens > 0
+	if !hasOut && u.OutputTokens > 0 {
+		out, hasOut = u.OutputTokens, true
+	}
+	included := int64(0)
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		included = u.PromptTokensDetails.CachedTokens
+	} else if u.InputTokensDetails != nil && u.InputTokensDetails.CachedTokens > 0 {
+		included = u.InputTokensDetails.CachedTokens
+	}
+	if included > in {
+		included = in
+	}
+	if hasIn {
+		dst.Input = in - included
+	}
+	if hasOut {
+		dst.Output = out
+	}
+	if included > 0 {
+		dst.CacheRead = included
+	}
+	if u.CacheReadInputTokens > 0 {
+		dst.CacheRead = u.CacheReadInputTokens
+	}
 }
 
 // SSEParser 逐块喂入响应字节, 提取用量。
@@ -112,25 +157,21 @@ func (p *SSEParser) finishLine() {
 	}
 }
 
+// Flush 处理流结束时尚未换行的最后一帧。不调用会丢掉末帧用量。
+func (p *SSEParser) Flush() {
+	p.finishLine()
+}
+
 // feedLine 处理一行完整 SSE 文本(不含换行)。
 func (p *SSEParser) feedLine(line []byte) {
-	if p.errMsg == "" {
-		if i := bytes.Index(line, []byte(`"message":"`)); i >= 0 && bytes.Contains(line, []byte(`"type":"error"`)) {
-			var ev struct {
-				Error struct {
-					Message string `json:"message"`
-				} `json:"error"`
-			}
-			if json.Unmarshal(line, &ev) == nil && ev.Error.Message != "" {
-				p.errMsg = ev.Error.Message
-			}
-		}
-	}
-	if !bytes.Contains(line, []byte(`"usage"`)) {
-		return
-	}
 	payload, ok := sseData(line)
 	if !ok {
+		return
+	}
+	if p.errMsg == "" {
+		p.captureStreamErr(payload)
+	}
+	if !bytes.Contains(payload, []byte(`"usage"`)) {
 		return
 	}
 	if bytes.Equal(bytes.TrimSpace(payload), []byte("[DONE]")) {
@@ -140,6 +181,26 @@ func (p *SSEParser) feedLine(line []byte) {
 		p.parseAnthropic(payload)
 	} else {
 		p.parseOpenAI(payload)
+	}
+}
+
+// captureStreamErr 从 data 负载识别错误事件。整行带 data: 前缀, 不能直接 Unmarshal。
+// Anthropic 是 {"type":"error","error":{...}}; OpenAI 是 {"error":{...}}, 没有 type:error。
+func (p *SSEParser) captureStreamErr(payload []byte) {
+	if bytes.Equal(bytes.TrimSpace(payload), []byte("[DONE]")) {
+		return
+	}
+	var ev struct {
+		Type  string `json:"type"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(payload, &ev) != nil || ev.Error == nil || ev.Error.Message == "" {
+		return
+	}
+	if ev.Type == "error" || ev.Type == "" || ev.Type == "response.failed" {
+		p.errMsg = ev.Error.Message
 	}
 }
 
@@ -195,23 +256,17 @@ func (p *SSEParser) parseAnthropic(payload []byte) {
 
 func (p *SSEParser) parseOpenAI(payload []byte) {
 	var ev struct {
-		Usage *oUsage `json:"usage"`
+		Usage    *oUsage `json:"usage"`
+		Response *struct {
+			Usage *oUsage `json:"usage"`
+		} `json:"response"`
 	}
-	if json.Unmarshal(payload, &ev) != nil || ev.Usage == nil {
+	if json.Unmarshal(payload, &ev) != nil {
 		return
 	}
-	u := ev.Usage
-	if u.PromptTokens > 0 {
-		p.u.Input = u.PromptTokens
-	}
-	if u.CompletionTokens > 0 {
-		p.u.Output = u.CompletionTokens
-	}
-	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
-		p.u.CacheRead = u.PromptTokensDetails.CachedTokens
-	}
-	if u.CacheReadInputTokens > 0 {
-		p.u.CacheRead = u.CacheReadInputTokens
+	applyOpenAIUsage(&p.u, ev.Usage)
+	if ev.Response != nil {
+		applyOpenAIUsage(&p.u, ev.Response.Usage)
 	}
 }
 
@@ -239,14 +294,20 @@ func ParseNonStream(body []byte, format string) Usage {
 		return u
 	}
 	var resp struct {
-		Usage *oUsage `json:"usage"`
+		Usage    *oUsage `json:"usage"`
+		Response *struct {
+			Usage *oUsage `json:"usage"`
+		} `json:"response"`
 	}
-	if json.Unmarshal(body, &resp) == nil && resp.Usage != nil {
-		u.Input = resp.Usage.PromptTokens
-		u.Output = resp.Usage.CompletionTokens
-		if resp.Usage.PromptTokensDetails != nil {
-			u.CacheRead = resp.Usage.PromptTokensDetails.CachedTokens
-		}
+	if json.Unmarshal(body, &resp) != nil {
+		return u
+	}
+	if resp.Usage != nil {
+		applyOpenAIUsage(&u, resp.Usage)
+		return u
+	}
+	if resp.Response != nil {
+		applyOpenAIUsage(&u, resp.Response.Usage)
 	}
 	return u
 }

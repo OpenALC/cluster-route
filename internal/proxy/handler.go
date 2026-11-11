@@ -267,8 +267,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(attempts) > 0 {
 			lastErr = attempts[len(attempts)-1].Err
 		}
-		h.record(body, &info, dec, s, trace, "", format, 0, Usage{}, false,
-			0, time.Since(start).Milliseconds(), lastErr)
+		h.record(body, &info, dec, s, trace, nil, format, 0, Usage{}, false,
+			0, time.Since(start).Milliseconds(), lastErr, start)
 		writeErr(w, format, http.StatusBadGateway, "Cluster Route: "+lastErr)
 		return
 	}
@@ -284,13 +284,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var errMsg string
 	statusOK := resp.StatusCode >= 200 && resp.StatusCode < 300
 
+	streamed := false
 	if isSSE(resp) {
+		streamed = true
 		// 流式先写头以尽快开流
 		copyRespHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
-		flusher, _ := w.(http.Flusher)
 		parser := NewSSEParser(format)
 		buf := make([]byte, 16<<10)
+		var streamReadErr error
 		for {
 			n, readErr := upBody.Read(buf)
 			if n > 0 {
@@ -298,16 +300,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if _, werr := w.Write(buf[:n]); werr != nil {
 					break // 客户端断开, 停止读取上游
 				}
-				if flusher != nil {
-					flusher.Flush()
-				}
+				flushResponse(w)
 			}
 			if readErr != nil {
+				streamReadErr = readErr
 				break
 			}
 		}
+		parser.Flush() // 末帧可能没有换行, 不刷会丢掉用量
 		usage = parser.Usage()
 		errMsg = parser.ErrMsg()
+		if streamReadErr != nil && streamReadErr != io.EOF && errMsg == "" {
+			errMsg = "读取上游流失败: " + streamReadErr.Error()
+		}
 	} else {
 		// 非流式先读完再写头: 超限或读取失败时可返回完整错误而非半截内容,
 		// 也不会残留上游的 Content-Encoding/Content-Length 头。
@@ -319,14 +324,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case rerr != nil:
 			errMsg = "读取上游响应失败: " + rerr.Error()
-			h.record(body, &info, dec, s, trace, used.Provider.Name, format, resp.StatusCode,
-				Usage{}, false, ttfb, time.Since(start).Milliseconds(), errMsg)
+			h.record(body, &info, dec, s, trace, &used, format, resp.StatusCode,
+				Usage{}, false, ttfb, time.Since(start).Milliseconds(), errMsg, start)
 			writeErr(w, format, http.StatusBadGateway, "cluster-route: "+errMsg)
 			return
 		case int64(len(rb)) > limit:
 			errMsg = "上游响应超过 32MB 上限"
-			h.record(body, &info, dec, s, trace, used.Provider.Name, format, resp.StatusCode,
-				Usage{}, false, ttfb, time.Since(start).Milliseconds(), errMsg)
+			h.record(body, &info, dec, s, trace, &used, format, resp.StatusCode,
+				Usage{}, false, ttfb, time.Since(start).Milliseconds(), errMsg, start)
 			writeErr(w, format, http.StatusBadGateway, "cluster-route: "+errMsg)
 			return
 		}
@@ -337,8 +342,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write(rb)
 	}
 
-	h.record(body, &info, dec, s, trace, used.Provider.Name, format, resp.StatusCode,
-		usage, statusOK && errMsg == "", ttfb, time.Since(start).Milliseconds(), errMsg)
+	ok := statusOK && errMsg == ""
+	note := errMsg
+	if ok && streamed && usage == (Usage{}) {
+		note = "上游流未包含 usage, 用量记为 0"
+		log.Printf("[proxy] 警告: %s %s %s", r.Method, r.URL.Path, note)
+	}
+	h.record(body, &info, dec, s, trace, &used, format, resp.StatusCode,
+		usage, ok, ttfb, time.Since(start).Milliseconds(), note, start)
 }
 
 // copyRespHeaders 透传上游响应头(跳过逐跳头); Content-Encoding 已在
@@ -376,18 +387,12 @@ func decompressBody(resp *http.Response) io.Reader {
 		}
 		rec.disable() // 解压成功, 无需再为回放保留前缀
 	case "deflate":
-		rec := &prefixRecorder{r: resp.Body, max: 64 << 10}
-		zr, err = zlib.NewReader(rec)
-		if err != nil {
-			// HTTP 的 "deflate" 历史上两种写法都有: RFC 规定 zlib 封装,
-			// 但不少服务端实际发送裸 DEFLATE。zlib 头校验失败时按裸流重试。
-			// 注意必须用 replay(): zlib.NewReader 可能已从底层读走若干字节,
-			// 直接用 resp.Body 会把开头那段丢掉。
-			log.Printf("[proxy] 提示: 上游 deflate 非 zlib 封装, 按裸 DEFLATE 重试: %v", err)
-			zr = flate.NewReader(rec.replay())
-		} else {
-			rec.disable()
+		r, decoded := openDeflate(resp.Body)
+		if decoded {
+			resp.Header.Del("Content-Encoding")
+			resp.Header.Del("Content-Length")
 		}
+		return r
 	default:
 		log.Printf("[proxy] 警告: 上游返回不支持的压缩编码 %q, 原样透传(用量统计可能为 0)", enc)
 		return resp.Body
@@ -436,10 +441,66 @@ func (h *Handler) shouldFailover(status int, s *config.Settings) bool {
 	if status == 429 || status == 402 || status == 403 || status == 408 {
 		return true
 	}
+	// same_name 的承诺是「这个模型名在别的供应商还有」。上游 404 就是没这个模型。
+	if status == http.StatusNotFound && s.Failover.Mode == "same_name" {
+		return true
+	}
 	if s.Failover.On5xx && status >= 500 {
 		return true
 	}
 	return false
+}
+
+var flushMissOnce sync.Once
+
+// flushResponse 逐帧下发。标准库 ResponseWriter 与实现了 Unwrap 的包装器都能刷。
+// Wails 的 contentTypeSniffer 既不实现 Flush 也不 Unwrap, 底层又要等请求结束才一次性
+// 交给 WebView。这里不再静默丢掉失败, 但只记一次, 避免每帧刷屏。
+func flushResponse(w http.ResponseWriter) {
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		flushMissOnce.Do(func() {
+			log.Printf("[proxy] 警告: 响应写入器不支持 Flush (%v), 桌面 WebView 内的 SSE 会在请求结束后一次下发", err)
+		})
+	}
+}
+
+// openDeflate 先按 RFC 的 zlib 封装解, 失败再试裸 DEFLATE。
+// 两种都解不开时原样返回, 不把错标的响应当成 502。
+func openDeflate(body io.Reader) (io.Reader, bool) {
+	rec := &prefixRecorder{r: body, max: 64 << 10}
+	if zr, err := zlib.NewReader(rec); err == nil {
+		rec.disable()
+		return zr, true
+	} else {
+		log.Printf("[proxy] 提示: 上游 deflate 非 zlib 封装, 按裸 DEFLATE 重试: %v", err)
+	}
+	src := rec.replay()
+	var raw bytes.Buffer
+	fr := flate.NewReader(io.TeeReader(src, &raw))
+	// 错标的 deflate 可能先吐出一两个字节再报 corrupt。探测要读过这个窗口,
+	// 否则会提交解码器, 随后在读完整响应时变成 502。
+	var decoded bytes.Buffer
+	tmp := make([]byte, 1024)
+	for decoded.Len() < 4096 {
+		n, err := fr.Read(tmp)
+		if n > 0 {
+			decoded.Write(tmp[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("[proxy] 警告: 裸 DEFLATE 也无法解码: %v, 原样透传", err)
+			return io.MultiReader(bytes.NewReader(raw.Bytes()), src), false
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if decoded.Len() == 0 {
+		return bytes.NewReader(nil), true
+	}
+	return io.MultiReader(bytes.NewReader(decoded.Bytes()), fr), true
 }
 
 func (h *Handler) buildUpstreamRequest(r *http.Request, t routing.Target, body []byte, format string) (*http.Request, error) {
@@ -467,11 +528,21 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, t routing.Target, body [
 	}
 	if len(body) > 0 && r.Method != http.MethodGet {
 		req.ContentLength = int64(len(body))
-		req.Header.Set("Content-Type", "application/json")
+		// 保留客户端的 Content-Type。空体才不设; 非空且未带类型时才默认 JSON。
+		// 强制写成 application/json 会毁掉 multipart 音频等透传请求。
+		if ct := r.Header.Get("Content-Type"); ct != "" {
+			req.Header.Set("Content-Type", ct)
+		} else {
+			req.Header.Set("Content-Type", "application/json")
+		}
 	}
 	// 透传关键头。不包含 Accept-Encoding: 本地中转的用量统计依赖明文响应,
 	// 且显式设置该头会让 Transport 放弃自动解压, 行为容易产生歧义。
-	for _, hk := range []string{"Accept", "Anthropic-Beta", "Anthropic-Version"} {
+	// 归因头可以透传。鉴权头不透传: 上游密钥由本机供应商配置注入, 客户端带的是路由密钥。
+	for _, hk := range []string{
+		"Accept", "Anthropic-Beta", "Anthropic-Version",
+		"HTTP-Referer", "X-Title", "X-OpenRouter-Title",
+	} {
 		if v := r.Header.Get(hk); v != "" {
 			req.Header.Set(hk, v)
 		}
@@ -486,14 +557,15 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, t routing.Target, body [
 		req.Header.Set("Authorization", "Bearer "+t.Key)
 	} else {
 		req.Header.Set("Authorization", "Bearer "+t.Key)
+		req.Header.Set("api-key", t.Key) // Azure OpenAI 认这个头, 不认 Bearer
 	}
 	req.Header.Set("User-Agent", "cluster-route/1.0")
 	return req, nil
 }
 
 func isSSE(resp *http.Response) bool {
-	ct := resp.Header.Get("Content-Type")
-	return resp.StatusCode == http.StatusOK && strings.Contains(ct, "text/event-stream")
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	return strings.Contains(ct, "text/event-stream")
 }
 
 func isHopHeader(k string) bool {
@@ -507,22 +579,30 @@ func isHopHeader(k string) bool {
 }
 
 // record 投递统计并触发归档。body 由通道 send 语义保证存活至写盘完成, 无需复制。
+// at 必须是请求开始时刻: 峰谷按这一刻选档, 不能用响应结束时刻。
 func (h *Handler) record(body []byte, info *rewrite.BodyInfo, dec routing.Decision, s config.Settings,
-	trace []byte, providerName, format string, status int, u Usage, ok bool,
-	ttfbMs, durMs int64, errMsg string) {
+	trace []byte, used *routing.Target, format string, status int, u Usage, ok bool,
+	ttfbMs, durMs int64, errMsg string, at time.Time) {
 
-	if providerName == "" && len(dec.Chain) > 0 {
+	var providerName, providerID, upstream string
+	if used != nil {
+		providerName = used.Provider.Name
+		providerID = used.Provider.ID
+		upstream = used.Model
+	} else if len(dec.Chain) > 0 {
 		providerName = dec.Chain[0].Provider.Name
+		providerID = dec.Chain[0].Provider.ID
+		upstream = dec.Chain[0].Model
 	}
 	if len(errMsg) > 500 {
 		errMsg = errMsg[:500]
 	}
 	rec := store.Record{
-		Ts:          time.Now().Unix(),
-		ProviderID:  providerIDOf(dec, providerName),
+		Ts:          at.Unix(),
+		ProviderID:  providerID,
 		ProviderNam: providerName,
 		Model:       info.Model,
-		Upstream:    upstreamOf(dec, providerName),
+		Upstream:    upstream,
 		Channel:     dec.Channel,
 		Format:      format,
 		Stream:      info.Stream,
@@ -572,28 +652,4 @@ func sessionKeyOf(info *rewrite.BodyInfo) string {
 	}
 	sum := sha256.Sum256([]byte(info.Project + "\x00" + info.FirstUser))
 	return "fp" + hex.EncodeToString(sum[:8])
-}
-
-func providerIDOf(dec routing.Decision, name string) string {
-	for _, t := range dec.Chain {
-		if t.Provider.Name == name {
-			return t.Provider.ID
-		}
-	}
-	if len(dec.Chain) > 0 {
-		return dec.Chain[0].Provider.ID
-	}
-	return ""
-}
-
-func upstreamOf(dec routing.Decision, name string) string {
-	for _, t := range dec.Chain {
-		if t.Provider.Name == name {
-			return t.Model
-		}
-	}
-	if len(dec.Chain) > 0 {
-		return dec.Chain[0].Model
-	}
-	return ""
 }
