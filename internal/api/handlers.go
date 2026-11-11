@@ -26,11 +26,14 @@ func (h *handlers) version(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) connection(w http.ResponseWriter, r *http.Request) {
-	s := h.Mgr.Settings()
+	port := h.ListenPort
+	if port == 0 {
+		port = h.Mgr.Settings().Port
+	}
 	writeJSON(w, 200, map[string]any{
-		"base_url":   "http://127.0.0.1:" + strconv.Itoa(s.Port),
+		"base_url":   "http://127.0.0.1:" + strconv.Itoa(port),
 		"router_key": h.Mgr.RouterKey(),
-		"port":       s.Port,
+		"port":       port,
 	})
 }
 
@@ -62,24 +65,62 @@ func rangeStart(q string) int64 {
 }
 
 func (h *handlers) overview(w http.ResponseWriter, r *http.Request) {
-	start := rangeStart(r.URL.Query().Get("range"))
+	rangeKey := r.URL.Query().Get("range")
+	start := rangeStart(rangeKey)
 	channel := r.URL.Query().Get("channel")
-	totals, err := h.Store.TotalsByRange(start, channel)
+	useDaily := channel == "" && (rangeKey == "" || rangeKey == "all" || rangeKey == "30d")
+	var totals store.Totals
+	var err error
+	var byProvider, byModel []store.GroupAgg
+	if useDaily {
+		totals, err = h.Store.TotalsDaily(start)
+		byProvider = h.dailyGroups("provider_id", start)
+		byModel = h.dailyGroups("model", start)
+	} else {
+		totals, err = h.Store.TotalsByRange(start, channel)
+		byProvider = must(h, w, "provider_name", start, channel)
+		byModel = must(h, w, "model", start, channel)
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	var dropped int64
+	if h.Archive != nil {
+		dropped = h.Archive.Dropped()
+	}
 	writeJSON(w, 200, map[string]any{
-		"totals":        totals,
-		"by_provider":   must(h, w, "provider_name", start),
-		"by_model":      must(h, w, "model", start),
-		"by_channel":    must(h, w, "channel", start),
-		"stats_dropped": h.Recorder.Dropped(),
+		"totals":          totals,
+		"by_provider":     byProvider,
+		"by_model":        byModel,
+		"by_channel":      must(h, w, "channel", start, channel),
+		"stats_dropped":   h.Recorder.Dropped(),
+		"archive_dropped": dropped,
 	})
 }
 
-func must(h *handlers, w http.ResponseWriter, by string, start int64) []store.GroupAgg {
-	g, err := h.Store.GroupBy(start, by)
+func (h *handlers) dailyGroups(field string, start int64) []store.GroupAgg {
+	g, err := h.Store.GroupDaily(field, start)
+	if err != nil || g == nil {
+		return []store.GroupAgg{}
+	}
+	if field != "provider_id" {
+		return g
+	}
+	names := map[string]string{}
+	for _, p := range h.Mgr.Cfg().Providers {
+		names[p.ID] = p.Name
+	}
+	for i := range g {
+		if n := names[g[i].Key]; n != "" {
+			g[i].Key = n
+		}
+	}
+	return g
+}
+
+func must(h *handlers, w http.ResponseWriter, by string, start int64, channel string) []store.GroupAgg {
+	g, err := h.Store.GroupBy(start, by, channel)
 	if err != nil {
 		log.Printf("[admin] 聚合查询失败(%s): %v", by, err)
 		return []store.GroupAgg{}
@@ -98,15 +139,11 @@ func (h *handlers) series(w http.ResponseWriter, r *http.Request) {
 	case "day":
 		bucket = 86400
 	case "week":
-		bucket = 7 * 86400
+		writeErr(w, 400, "不支持按周聚合")
+		return
 	}
-	// 有界范围 + 天级桶时优先读永久聚合表: 请求明细只保留 retention_days 天,
-	// 若用户把保留期调到 30 天以下, 「30天」趋势会缺口, 而 daily_stats 永久保留。
-	// 注意两点:
-	//  1. daily_stats 只能按天回答, 不能用于按小时分桶的 24h 视图;
-	//  2. 「全部」(start=0) 仍走明细, 保证趋势图与上方汇总卡片来自同一窗口,
-	//     否则卡片(明细, 90 天)与曲线(聚合, 永久)会给出互相矛盾的数字。
-	if start > 0 && bucket >= 86400 {
+	// 天级桶(含全部)读永久日表, 与 30天/全部 的汇总卡片同一窗口。
+	if bucket >= 86400 {
 		if daily, err := h.Store.TimeseriesDaily(); err == nil {
 			if pts := filterSince(daily, start); len(pts) > 0 {
 				writeJSON(w, 200, pts)
@@ -134,16 +171,6 @@ func filterSince(pts []store.Point, start int64) []store.Point {
 		}
 	}
 	return out
-}
-
-func (h *handlers) group(w http.ResponseWriter, r *http.Request) {
-	start := rangeStart(r.URL.Query().Get("range"))
-	g, err := h.Store.GroupBy(start, r.URL.Query().Get("by"))
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, 200, g)
 }
 
 func (h *handlers) listRequests(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +330,7 @@ func (h *handlers) testProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := h.probeProvider(r.Context(), *target)
+	_ = h.Mgr.SetProviderTestResult(id, res)
 	writeJSON(w, 200, map[string]any{
 		"ok": res.OK, "latency_ms": res.LatencyMs, "errors": res.Errors, "tested_at": res.TestedAt,
 	})
@@ -316,14 +344,17 @@ func (h *handlers) testAllProviders(w http.ResponseWriter, r *http.Request) {
 		name string
 		res  *config.TestResult
 	}
-	items := make([]item, 0, len(cfg.Providers))
+	enabled := make([]config.Provider, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		if p.Enabled {
+			enabled = append(enabled, p)
+		}
+	}
+	items := make([]item, len(enabled))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, p := range cfg.Providers {
-		if !p.Enabled {
-			continue
-		}
-		items = append(items, item{id: p.ID, name: p.Name})
+	for i, p := range enabled {
+		items[i] = item{id: p.ID, name: p.Name}
 		wg.Add(1)
 		go func(p config.Provider, idx int) {
 			defer wg.Done()
@@ -331,7 +362,7 @@ func (h *handlers) testAllProviders(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			items[idx].res = res
 			mu.Unlock()
-		}(p, len(items)-1)
+		}(p, i)
 	}
 	wg.Wait()
 	out := make([]map[string]any, 0, len(items))
@@ -426,15 +457,34 @@ func (h *handlers) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.RouterKeyEnc = "" // 防止经此接口改密钥
+	if in.Port != 0 && !validListenPort(in.Port) {
+		writeErr(w, 400, "端口必须在 1-65535")
+		return
+	}
+	scope := r.URL.Query().Get("scope")
 	if err := h.Mgr.UpdateSettings(func(cur *config.Settings) {
-		// 服务端管理字段以存量为准: 前端回传的是脱敏快照(router_key_enc 为空),
-		// 若整体覆盖会把密钥密文抹成空串, 导致下次启动重新生成 sk-cr 密钥、
-		// 客户端里已配置的密钥全部失效。密钥只能经 rotate 接口轮换。
 		port, keyEnc := cur.Port, cur.RouterKeyEnc
-		*cur = in
-		cur.RouterKeyEnc = keyEnc
-		if in.Port == 0 {
-			cur.Port = port
+		switch scope {
+		case "channels":
+			cur.DefaultProviderID = in.DefaultProviderID
+			cur.Lightweight = in.Lightweight
+			cur.Subagent = in.Subagent
+			cur.Failover = in.Failover
+		case "general":
+			cur.RetentionDays = in.RetentionDays
+			cur.InjectOpenAIUsage = in.InjectOpenAIUsage
+			cur.UnloadOnMinimise = in.UnloadOnMinimise
+			cur.Inject = in.Inject
+			cur.Archive = in.Archive
+			if in.Port != 0 {
+				cur.Port = in.Port
+			}
+		default:
+			*cur = in
+			cur.RouterKeyEnc = keyEnc
+			if in.Port == 0 {
+				cur.Port = port
+			}
 		}
 	}); err != nil {
 		writeErr(w, 500, err.Error())
@@ -461,6 +511,10 @@ func (h *handlers) upsertPricing(w http.ResponseWriter, r *http.Request) {
 	var p store.Price
 	if err := readBodyJSON(r, &p); err != nil || strings.TrimSpace(p.Model) == "" {
 		writeErr(w, 400, "需要 model 与单价")
+		return
+	}
+	if priceNegative(p) {
+		writeErr(w, 400, "单价不能为负")
 		return
 	}
 	flatSet := p.Input != 0 || p.Output != 0 || p.CacheRead != 0 || p.CacheCreation != 0
@@ -494,6 +548,20 @@ func (h *handlers) upsertPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"ok": "saved"})
+}
+
+func validListenPort(p int) bool { return p >= 1 && p <= 65535 }
+
+func priceNegative(p store.Price) bool {
+	if p.Input < 0 || p.Output < 0 || p.CacheRead < 0 || p.CacheCreation < 0 {
+		return true
+	}
+	for _, tier := range []*store.Tier{p.Peak, p.Valley} {
+		if tier != nil && (tier.Input < 0 || tier.Output < 0 || tier.CacheRead < 0 || tier.CacheCreation < 0 || tier.Rate < 0) {
+			return true
+		}
+	}
+	return false
 }
 
 func validHM(s string) bool {
@@ -602,4 +670,27 @@ func (h *handlers) getSnapshot(w http.ResponseWriter, r *http.Request) {
 	content.Project = row.Project
 	content.Captured = row.Ts
 	writeJSON(w, 200, content)
+}
+
+func (h *handlers) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, 400, "非法快照 ID")
+		return
+	}
+	row, err := h.Store.GetSnapshot(id)
+	if err != nil {
+		writeErr(w, 404, "快照不存在")
+		return
+	}
+	path, err := h.Store.DeleteSnapshotRow(id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if path != "" {
+		_ = os.Remove(filepath.Join(h.ArchiveDir, filepath.FromSlash(path)))
+	}
+	_ = h.Store.DeleteSessionIfEmpty(row.SessionKy)
+	writeJSON(w, 200, map[string]string{"ok": "deleted"})
 }

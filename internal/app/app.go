@@ -37,9 +37,10 @@ type App struct {
 	Proxy    *proxy.Handler
 	Mux      http.Handler // 管理 API + 代理(桌面模式同时作为 wails 资产服务器的回落 Handler)
 
-	server *http.Server
-	stop   chan struct{}
-	once   sync.Once
+	server      *http.Server
+	stop        chan struct{}
+	janitorDone chan struct{}
+	once        sync.Once
 }
 
 // Start 启动全部子系统并监听 127.0.0.1:port。
@@ -71,24 +72,24 @@ func Start(dataDir string, portOverride int, webFS fs.FS, version string) (*App,
 	px := proxy.New(mgr, eng, recorder, arch)
 
 	s := mgr.Settings()
+	configured := s.Port
 	if portOverride != 0 {
-		s.Port = portOverride
+		configured = portOverride
+	}
+	ln, actual, err := listenLoopback(configured)
+	if err != nil {
+		close(stop)
+		waitAll(2*time.Second, recorder.Done(), arch.Done())
+		st.Close()
+		return nil, fmt.Errorf("端口 %d 监听失败: %w", configured, err)
 	}
 	deps := api.Deps{
 		Mgr: mgr, Store: st, Pricer: pricer, Recorder: recorder,
 		Proxy: px, Archive: arch, ArchiveDir: archiveDir,
 		WebFS: webFS, Version: version, LogFile: filepath.Join(dataDir, "router.log"),
+		ListenPort: actual,
 	}
 	mux := api.Router(deps)
-	addr := fmt.Sprintf("127.0.0.1:%d", s.Port)
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		// 启动即失败: 同样要先让后台协程落盘收尾, 再关库, 避免写入已关闭的数据库。
-		close(stop)
-		waitAll(2*time.Second, recorder.Done(), arch.Done())
-		st.Close()
-		return nil, fmt.Errorf("端口 %d 监听失败(可能已有实例在运行): %w", s.Port, err)
-	}
 	server := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 30 * time.Second,
@@ -98,14 +99,42 @@ func Start(dataDir string, portOverride int, webFS fs.FS, version string) (*App,
 	}()
 
 	a := &App{
-		DataDir: dataDir, Port: s.Port,
+		DataDir: dataDir, Port: actual,
 		Mgr: mgr, Store: st, Pricer: pricer,
 		Recorder: recorder, Archive: arch, Proxy: px,
 		Mux:    mux,
 		server: server, stop: stop,
+		janitorDone: make(chan struct{}),
 	}
 	go a.janitor()
 	return a, nil
+}
+
+// listenLoopback 优先听指定端口。失败时改试 3721, 再不行用系统分配端口,
+// 避免非法或被占用的端口把桌面版锁死在进不了界面的状态。配置文件里的端口不改。
+func listenLoopback(preferred int) (net.Listener, int, error) {
+	candidates := make([]int, 0, 3)
+	if preferred >= 1 && preferred <= 65535 {
+		candidates = append(candidates, preferred)
+	}
+	if preferred != 3721 {
+		candidates = append(candidates, 3721)
+	}
+	candidates = append(candidates, 0)
+	var last error
+	for _, p := range candidates {
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			last = err
+			continue
+		}
+		actual := ln.Addr().(*net.TCPAddr).Port
+		if actual != preferred {
+			log.Printf("[app] 端口 %d 不可用, 已改用 %d。可在设置里改回。", preferred, actual)
+		}
+		return ln, actual, nil
+	}
+	return nil, 0, last
 }
 
 // Stop 优雅停止全部子系统。
@@ -125,7 +154,7 @@ func (a *App) stopOnce() {
 	cancel()
 
 	close(a.stop)
-	waitAll(2*time.Second, a.Recorder.Done(), a.Archive.Done())
+	waitAll(2*time.Second, a.Recorder.Done(), a.Archive.Done(), a.janitorDone)
 
 	_ = a.Store.Close()
 }
@@ -144,6 +173,7 @@ func waitAll(d time.Duration, chans ...<-chan struct{}) {
 
 // janitor 每小时清理过期请求明细与超容量归档。
 func (a *App) janitor() {
+	defer close(a.janitorDone)
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	cleanup := func() {
