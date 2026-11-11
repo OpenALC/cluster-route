@@ -41,7 +41,8 @@ export default defineComponent({
         xAxis: { type: 'category', data: p.map((x) => fmtTime(x.bucket)), axisLabel: { fontSize: 10 } },
         yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: (v: number) => fmtTokens(v) } },
         series: [
-          { name: '输入', type: 'line', stack: 't', areaStyle: { opacity: 0.25 }, smooth: true, symbol: 'none', lineStyle: { width: 1.5 }, data: p.map((x) => x.input_tokens - x.cache_read_tokens - x.cache_creation_tokens < 0 ? 0 : x.input_tokens - x.cache_read_tokens - x.cache_creation_tokens), itemStyle: { color: '#0ea5e9' } },
+          // input_tokens 已不含缓存(OpenAI 在解析时扣掉 cached_tokens)。再减会把 Anthropic 输入打成 0。
+          { name: '输入', type: 'line', stack: 't', areaStyle: { opacity: 0.25 }, smooth: true, symbol: 'none', lineStyle: { width: 1.5 }, data: p.map((x) => x.input_tokens), itemStyle: { color: '#0ea5e9' } },
           { name: '缓存命中', type: 'line', stack: 't', areaStyle: { opacity: 0.25 }, smooth: true, symbol: 'none', lineStyle: { width: 1.5 }, data: p.map((x) => x.cache_read_tokens), itemStyle: { color: '#10b981' } },
           { name: '缓存写入', type: 'line', stack: 't', areaStyle: { opacity: 0.25 }, smooth: true, symbol: 'none', lineStyle: { width: 1.5 }, data: p.map((x) => x.cache_creation_tokens), itemStyle: { color: '#f59e0b' } },
           { name: '输出', type: 'line', stack: 't', areaStyle: { opacity: 0.25 }, smooth: true, symbol: 'none', lineStyle: { width: 1.5 }, data: p.map((x) => x.output_tokens), itemStyle: { color: '#8b5cf6' } },
@@ -122,7 +123,7 @@ export default defineComponent({
     <div class="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
       <StatCard label="请求数" :value="String(totals.requests)" :sub="`失败 ${totals.errors}`" tone="sky" />
       <StatCard label="总 Tokens" :value="fmtTokens(totals.input_tokens + totals.output_tokens)" sub="输入+输出" tone="slate" />
-      <StatCard label="输入" :value="fmtTokens(totals.input_tokens)" sub="含缓存部分" tone="sky" />
+      <StatCard label="输入" :value="fmtTokens(totals.input_tokens)" sub="不含缓存" tone="sky" />
       <StatCard label="缓存命中" :value="fmtTokens(totals.cache_read_tokens)" :sub="fmtHitRate(totals.cache_read_tokens, totals.input_tokens, totals.cache_creation_tokens) + ' 命中率'" tone="emerald" />
       <StatCard label="缓存写入" :value="fmtTokens(totals.cache_creation_tokens)" tone="amber" />
       <StatCard label="输出" :value="fmtTokens(totals.output_tokens)" tone="violet" />

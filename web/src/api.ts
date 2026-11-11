@@ -209,7 +209,7 @@ export const api = {
   version: () => get<{ version: string }>('/admin/version'),
   connection: () => get<{ base_url: string; router_key: string; port: number }>('/admin/connection'),
   rotateKey: () => send<{ router_key: string }>('POST', '/admin/routerkey/rotate'),
-  overview: (range: string) => get<{ totals: Totals; by_provider: GroupAgg[]; by_model: GroupAgg[]; by_channel: GroupAgg[]; stats_dropped: number }>(`/admin/overview?range=${range}`),
+  overview: (range: string) => get<{ totals: Totals; by_provider: GroupAgg[]; by_model: GroupAgg[]; by_channel: GroupAgg[]; stats_dropped: number; archive_dropped?: number }>(`/admin/overview?range=${range}`),
   series: (range: string, bucket: string) => get<Point[]>(`/admin/series?range=${range}&bucket=${bucket}`),
   requests: (q: string) => get<RequestRow[]>(`/admin/requests?${q}`),
 
@@ -226,7 +226,7 @@ export const api = {
   putRoutes: (routes: Route[]) => send('PUT', '/admin/routes', routes),
 
   settings: () => get<Settings>('/admin/settings'),
-  putSettings: (s: Settings) => send('PUT', '/admin/settings', s),
+  putSettings: (s: Settings, scope?: 'general' | 'channels') => send('PUT', scope ? `/admin/settings?scope=${scope}` : '/admin/settings', s),
 
   pricing: () => get<Price[]>('/admin/pricing'),
   upsertPrice: (p: Price) => send('POST', '/admin/pricing', p),
@@ -236,5 +236,6 @@ export const api = {
   sessions: () => get<SessionRow[]>('/admin/sessions'),
   snapshots: (key: string) => get<SnapshotRow[]>(`/admin/sessions/${encodeURIComponent(key)}/snapshots`),
   snapshotContent: (id: number) => get<SnapshotContent>(`/admin/snapshots/${id}`),
+  deleteSnapshot: (id: number) => send('DELETE', `/admin/snapshots/${id}`),
   deleteSession: (key: string) => send('DELETE', `/admin/sessions/${encodeURIComponent(key)}`),
 };

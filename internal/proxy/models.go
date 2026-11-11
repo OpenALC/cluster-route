@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
+
+	"cluster-route/internal/config"
 )
 
 // serveModels 响应 GET /v1/models: 把已配置的启用路由别名与启用供应商模型池
@@ -19,13 +22,17 @@ func (h *Handler) serveModels(w http.ResponseWriter, format string) {
 		seen[id] = true
 		ids = append(ids, id)
 	}
+	usable := map[string]bool{}
+	for _, p := range cfg.Providers {
+		usable[p.ID] = providerAdvertisable(p, format, h.mgr.ProviderKey(p.ID))
+	}
 	for _, r := range cfg.Routes {
-		if r.Enabled {
+		if r.Enabled && usable[r.ProviderID] {
 			add(r.Alias)
 		}
 	}
 	for _, p := range cfg.Providers {
-		if !p.Enabled {
+		if !usable[p.ID] {
 			continue
 		}
 		for _, m := range p.FetchedModels {
@@ -65,4 +72,14 @@ func (h *Handler) serveModels(w http.ResponseWriter, format string) {
 		data = append(data, model{ID: id, Object: "model", Created: 0, OwnedBy: "cluster-route"})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+}
+
+func providerAdvertisable(p config.Provider, format, key string) bool {
+	if !p.Enabled || strings.TrimSpace(key) == "" {
+		return false
+	}
+	if format == "anthropic" {
+		return strings.TrimSpace(p.AnthropicURL) != ""
+	}
+	return strings.TrimSpace(p.OpenAIURL) != ""
 }

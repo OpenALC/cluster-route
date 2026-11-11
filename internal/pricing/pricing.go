@@ -37,7 +37,7 @@ func (p *Pricer) Reload() error {
 	}
 	m := make(map[string]store.Price, len(list))
 	for _, it := range list {
-		m[it.Model] = it
+		m[normModel(it.Model)] = it
 	}
 	p.mu.Lock()
 	p.prices = m
@@ -50,7 +50,7 @@ func (p *Pricer) Reload() error {
 // 平价未配置且档位为倍率模式时视为不计费。
 func (p *Pricer) Cost(model string, at time.Time, in, cacheRead, cacheCreate, out int64) float64 {
 	p.mu.RLock()
-	pr, ok := p.prices[model]
+	pr, ok := p.prices[normModel(model)]
 	p.mu.RUnlock()
 	if !ok {
 		return 0
@@ -115,20 +115,57 @@ func parseHM(s string) (int, bool) {
 	return h*60 + m, true
 }
 
-// Upsert 写入单价并刷新内存。
+// Upsert 写入单价并刷新内存。模型名按 TrimSpace+小写归一, 与计费查找一致。
 func (p *Pricer) Upsert(pr store.Price) error {
+	pr.Model = normModel(pr.Model)
+	if pr.Model == "" {
+		return fmt.Errorf("模型名不能为空")
+	}
+	if err := p.deleteFolded(pr.Model); err != nil {
+		return err
+	}
 	if err := p.store.UpsertPrice(pr); err != nil {
 		return err
 	}
 	return p.Reload()
 }
 
-// Delete 删除单价并刷新内存。
+// Delete 删除单价并刷新内存。按归一化键删除, 避免大小写不同删不掉。
 func (p *Pricer) Delete(model string) error {
-	if err := p.store.DeletePrice(model); err != nil {
+	key := normModel(model)
+	list, err := p.store.ListPrices()
+	if err != nil {
 		return err
 	}
+	for _, it := range list {
+		if normModel(it.Model) != key {
+			continue
+		}
+		if err := p.store.DeletePrice(it.Model); err != nil {
+			return err
+		}
+	}
 	return p.Reload()
+}
+
+// deleteFolded 删掉与 key 归一化后相同、但库内写法不同的旧行, 避免留下对不上的重复键。
+func (p *Pricer) deleteFolded(key string) error {
+	list, err := p.store.ListPrices()
+	if err != nil {
+		return err
+	}
+	for _, it := range list {
+		if normModel(it.Model) == key && it.Model != key {
+			if err := p.store.DeletePrice(it.Model); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func normModel(model string) string {
+	return strings.ToLower(strings.TrimSpace(model))
 }
 
 // List 全部单价。
@@ -153,31 +190,72 @@ func (p *Pricer) ImportCCSwitch(data []byte) (int, error) {
 	if err := json.Unmarshal(data, &cc); err != nil {
 		return 0, fmt.Errorf("JSON 解析失败: %w", err)
 	}
-	n := 0
+	var rows []store.Price
+	var errs []string
 	for _, m := range cc.Models {
-		if strings.TrimSpace(m.ModelID) == "" {
+		id := normModel(m.ModelID)
+		if id == "" {
 			continue
 		}
-		pr := store.Price{
-			Model:         m.ModelID,
-			Input:         parseNum(m.InputCostPerMillion),
-			Output:        parseNum(m.OutputCostPerMillion),
-			CacheRead:     parseNum(m.CacheReadCostPerMillion),
-			CacheCreation: parseNum(m.CacheCreationCostPerMillion),
+		in, err1 := parseNum(m.InputCostPerMillion)
+		out, err2 := parseNum(m.OutputCostPerMillion)
+		cr, err3 := parseNum(m.CacheReadCostPerMillion)
+		ccCost, err4 := parseNum(m.CacheCreationCostPerMillion)
+		var bad []string
+		for _, err := range []error{err1, err2, err3, err4} {
+			if err != nil {
+				bad = append(bad, err.Error())
+			}
+		}
+		if len(bad) > 0 {
+			errs = append(errs, id+": "+strings.Join(bad, ", "))
+			continue
+		}
+		rows = append(rows, store.Price{
+			Model: id, Input: in, Output: out, CacheRead: cr, CacheCreation: ccCost,
+		})
+	}
+	if len(errs) > 0 {
+		return 0, fmt.Errorf("以下模型价格无法解析: %s", strings.Join(errs, "; "))
+	}
+	existing, err := p.store.ListPrices()
+	if err != nil {
+		return 0, err
+	}
+	kept := map[string]store.Price{}
+	for _, it := range existing {
+		kept[normModel(it.Model)] = it
+	}
+	for i := range rows {
+		if old, ok := kept[rows[i].Model]; ok {
+			rows[i].Peak = old.Peak
+			rows[i].Valley = old.Valley
+		}
+	}
+	for _, pr := range rows {
+		if err := p.deleteFolded(pr.Model); err != nil {
+			return 0, err
 		}
 		if err := p.store.UpsertPrice(pr); err != nil {
-			return n, err
+			return 0, err
 		}
-		n++
 	}
 	if err := p.Reload(); err != nil {
-		return n, err
+		return len(rows), err
 	}
-	return n, nil
+	return len(rows), nil
 }
 
-func parseNum(s string) float64 {
-	var f float64
-	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%g", &f)
-	return f
+// parseNum 严格解析单价。空字符串表示未配置(0); 带货币符号或千分位必须报错,
+// 不能静默变成 0。
+func parseNum(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("无法解析价格 %q", s)
+	}
+	return f, nil
 }

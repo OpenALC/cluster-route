@@ -31,6 +31,7 @@ export default defineComponent({
       routes: [] as RouteRow[],
       settings: null as Settings | null,
       saving: false,
+      loadError: '',
     };
   },
   computed: {
@@ -46,16 +47,18 @@ export default defineComponent({
       return (label: string) => [{ value: '', label }, ...this.providerOptions];
     },
   },
-  mounted() {
-    Promise.all([api.providers(), api.routes(), api.settings()])
-      .then(([p, r, s]) => {
-        this.providers = p;
-        this.routes = r || [];
-        this.settings = s;
-      })
-      .catch((e) => toast('error', e.message));
-  },
+  mounted() { this.load(); },
   methods: {
+    load(): void {
+      this.loadError = '';
+      Promise.all([api.providers(), api.routes(), api.settings()])
+        .then(([p, r, s]) => {
+          this.providers = p;
+          this.routes = r || [];
+          this.settings = s;
+        })
+        .catch((e) => { this.loadError = e.message; toast('error', e.message); });
+    },
     saveRoutes(): void {
       this.saving = true;
       api.putRoutes(this.routes).catch((e) => toast('error', e.message)).finally(() => { this.saving = false; });
@@ -70,7 +73,7 @@ export default defineComponent({
       if (!this.settings) return;
       patch(this.settings);
       this.saving = true;
-      api.putSettings(this.settings).catch((e) => toast('error', e.message)).finally(() => { this.saving = false; });
+      api.putSettings(this.settings, 'channels').catch((e) => toast('error', e.message)).finally(() => { this.saving = false; });
     },
     move(list: Target[], i: number, dir: -1 | 1): void {
       const j = i + dir;
@@ -80,10 +83,16 @@ export default defineComponent({
     addLwTarget(): void {
       if (!this.settings) return;
       this.settings.lightweight.targets.push({ provider_id: this.providers[0]?.id || '', model: '' });
+      this.saveSettings(() => undefined);
     },
     addFoTarget(): void {
       if (!this.settings) return;
       this.settings.failover.targets.push({ provider_id: this.providers[0]?.id || '', model: '' });
+      this.saveSettings(() => undefined);
+    },
+    saveMoved(list: Target[], i: number, dir: -1 | 1): void {
+      this.move(list, i, dir);
+      this.saveSettings(() => undefined);
     },
   },
 });
@@ -93,6 +102,11 @@ export default defineComponent({
   <div>
     <div class="mb-5">
       <h1 class="text-xl font-bold">路由</h1>
+    </div>
+
+    <div v-if="loadError && !settings" class="card mb-4 p-4 text-sm">
+      <p class="text-rose-500">{{ loadError }}</p>
+      <button class="btn-ghost mt-2" @click="load">重试</button>
     </div>
 
     <div class="mb-4 flex gap-1 rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
@@ -194,10 +208,10 @@ export default defineComponent({
         <div class="space-y-2">
           <div v-for="(t, i) in settings.lightweight.targets" :key="i" class="flex items-center gap-2">
             <span class="w-6 text-center text-xs font-bold text-sky-600">{{ i + 1 }}</span>
-            <Select v-model="t.provider_id" :options="providerOptions" width="w-48" />
-            <input v-model="t.model" class="input !w-56 font-mono text-xs" placeholder="上游模型名" />
-            <button class="btn-ghost !px-1.5" :disabled="i === 0" @click="move(settings!.lightweight.targets, i, -1)"><IconUp class="h-3.5 w-3.5" /></button>
-            <button class="btn-ghost !px-1.5" :disabled="i === settings!.lightweight.targets.length - 1" @click="move(settings!.lightweight.targets, i, 1)"><IconDown class="h-3.5 w-3.5" /></button>
+            <Select v-model="t.provider_id" :options="providerOptions" width="w-48" @change="saveSettings(() => undefined)" />
+            <input v-model="t.model" class="input !w-56 font-mono text-xs" placeholder="上游模型名" @change="saveSettings(() => undefined)" />
+            <button class="btn-ghost !px-1.5" :disabled="i === 0" @click="saveMoved(settings!.lightweight.targets, i, -1)"><IconUp class="h-3.5 w-3.5" /></button>
+            <button class="btn-ghost !px-1.5" :disabled="i === settings!.lightweight.targets.length - 1" @click="saveMoved(settings!.lightweight.targets, i, 1)"><IconDown class="h-3.5 w-3.5" /></button>
             <button class="btn-danger !px-2" @click="saveSettings((s) => { s.lightweight.targets.splice(i, 1); })"><IconTrash class="h-4 w-4" /></button>
           </div>
         </div>
@@ -287,10 +301,10 @@ export default defineComponent({
         <div class="space-y-2">
           <div v-for="(t, i) in settings.failover.targets" :key="i" class="flex items-center gap-2">
             <span class="w-6 text-center text-xs font-bold text-rose-500">{{ i + 1 }}</span>
-            <Select v-model="t.provider_id" :options="providerOptions" width="w-48" />
-            <input v-model="t.model" class="input !w-56 font-mono text-xs" placeholder="上游模型名" />
-            <button class="btn-ghost !px-1.5" :disabled="i === 0" @click="move(settings!.failover.targets, i, -1)"><IconUp class="h-3.5 w-3.5" /></button>
-            <button class="btn-ghost !px-1.5" :disabled="i === settings!.failover.targets.length - 1" @click="move(settings!.failover.targets, i, 1)"><IconDown class="h-3.5 w-3.5" /></button>
+            <Select v-model="t.provider_id" :options="providerOptions" width="w-48" @change="saveSettings(() => undefined)" />
+            <input v-model="t.model" class="input !w-56 font-mono text-xs" placeholder="上游模型名" @change="saveSettings(() => undefined)" />
+            <button class="btn-ghost !px-1.5" :disabled="i === 0" @click="saveMoved(settings!.failover.targets, i, -1)"><IconUp class="h-3.5 w-3.5" /></button>
+            <button class="btn-ghost !px-1.5" :disabled="i === settings!.failover.targets.length - 1" @click="saveMoved(settings!.failover.targets, i, 1)"><IconDown class="h-3.5 w-3.5" /></button>
             <button class="btn-danger !px-2" @click="saveSettings((s) => { s.failover.targets.splice(i, 1); })"><IconTrash class="h-4 w-4" /></button>
           </div>
         </div>

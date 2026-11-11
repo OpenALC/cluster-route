@@ -112,7 +112,10 @@ func (r *Recorder) flush() {
 		return
 	}
 	if err := r.store.InsertBatch(b); err != nil {
-		log.Printf("[stats] 落库失败(丢弃 %d 条): %v", len(b), err)
+		log.Printf("[stats] 落库失败, 重试一次(%d 条): %v", len(b), err)
+		if err2 := r.store.InsertBatch(b); err2 != nil {
+			log.Printf("[stats] 落库失败(丢弃 %d 条): %v", len(b), err2)
+		}
 	}
 }
 

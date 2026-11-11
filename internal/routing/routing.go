@@ -60,20 +60,22 @@ func (e *Engine) Decide(alias, format string, info *rewrite.BodyInfo) Decision {
 
 	switch {
 	case s.Lightweight.Enabled && e.lightHit(&s.Lightweight, alias, info):
-		if t, ok := e.firstTarget(s.Lightweight.Targets, alias); ok {
-			setPrimary(t, ChannelLightweight)
+		if ts := e.lightTargets(s.Lightweight.Targets, alias, format); len(ts) > 0 {
+			dec.Channel = ChannelLightweight
+			dec.Chain = append(dec.Chain, ts...)
 		}
 	}
 	if len(dec.Chain) == 0 && s.Subagent.Enabled && info.IsSubagent {
-		if t, ok := e.resolve(s.Subagent.Target, alias); ok {
+		if t, ok := e.resolve(s.Subagent.Target, alias, format); ok {
 			setPrimary(t, ChannelSubagent)
 		}
 	}
 	if len(dec.Chain) == 0 {
-		if r, ok := e.routeHit(cfg.Routes, alias); ok {
+		if r, ok := e.routeHit(cfg.Routes, alias, format); ok {
 			setPrimary(r, ChannelMain)
 		} else if s.DefaultProviderID != "" {
-			if t, ok := e.resolve(config.Target{ProviderID: s.DefaultProviderID}, alias); ok {
+			allowEmpty := alias == ""
+			if t, ok := e.resolveAt(config.Target{ProviderID: s.DefaultProviderID}, alias, format, allowEmpty); ok {
 				setPrimary(t, ChannelDefault)
 			}
 		}
@@ -101,51 +103,65 @@ func (e *Engine) lightHit(lw *config.Lightweight, alias string, info *rewrite.Bo
 	return false
 }
 
-func (e *Engine) routeHit(routes []config.Route, alias string) (Target, bool) {
+func (e *Engine) routeHit(routes []config.Route, alias, format string) (Target, bool) {
 	if alias == "" {
 		return Target{}, false
 	}
 	for _, r := range routes {
 		if r.Enabled && r.Alias == alias {
-			return e.resolve(config.Target{ProviderID: r.ProviderID, Model: r.UpstreamModel}, alias)
+			return e.resolve(config.Target{ProviderID: r.ProviderID, Model: r.UpstreamModel}, alias, format)
 		}
 	}
 	return Target{}, false
 }
 
-// firstTarget 返回轻量通道列表中第一个可用目标, 其模型缺省用请求别名。
-func (e *Engine) firstTarget(ts []config.Target, alias string) (Target, bool) {
+// lightTargets 按列表顺序返回全部可解析目标。首目标承接流量, 失败时顺延。
+func (e *Engine) lightTargets(ts []config.Target, alias, format string) []Target {
+	out := make([]Target, 0, len(ts))
 	for _, t := range ts {
-		if tt, ok := e.resolve(t, alias); ok {
-			return tt, true
+		if tt, ok := e.resolve(t, alias, format); ok {
+			out = append(out, tt)
 		}
 	}
-	return Target{}, false
+	return out
 }
 
-// resolve 将配置目标解析为可执行目标(供应商启用 + 有 Key + 有模型名)。
-func (e *Engine) resolve(t config.Target, fallbackModel string) (Target, bool) {
+// resolve 将配置目标解析为可执行目标(启用 + 有 Key + 有对应协议端点 + 有模型名)。
+func (e *Engine) resolve(t config.Target, fallbackModel, format string) (Target, bool) {
+	return e.resolveAt(t, fallbackModel, format, false)
+}
+
+// resolveAt 同 resolve。allowEmptyModel 只给「解析不出模型名时的默认供应商透传」用。
+func (e *Engine) resolveAt(t config.Target, fallbackModel, format string, allowEmptyModel bool) (Target, bool) {
 	cfg := e.mgr.Cfg()
 	for _, p := range cfg.Providers {
-		if p.ID == t.ProviderID {
-			if !p.Enabled {
-				return Target{}, false
-			}
-			key := e.mgr.ProviderKey(p.ID)
-			if key == "" {
-				return Target{}, false
-			}
-			model := t.Model
-			if model == "" {
-				model = fallbackModel
-			}
-			if model == "" {
-				return Target{}, false
-			}
-			return Target{Provider: p, Model: model, Key: key}, true
+		if p.ID != t.ProviderID {
+			continue
 		}
+		if !p.Enabled || !providerHasEndpoint(p, format) {
+			return Target{}, false
+		}
+		key := e.mgr.ProviderKey(p.ID)
+		if key == "" {
+			return Target{}, false
+		}
+		model := t.Model
+		if model == "" {
+			model = fallbackModel
+		}
+		if model == "" && !allowEmptyModel {
+			return Target{}, false
+		}
+		return Target{Provider: p, Model: model, Key: key}, true
 	}
 	return Target{}, false
+}
+
+func providerHasEndpoint(p config.Provider, format string) bool {
+	if format == "anthropic" {
+		return strings.TrimSpace(p.AnthropicURL) != ""
+	}
+	return strings.TrimSpace(p.OpenAIURL) != ""
 }
 
 // appendFailover 依据限额切换配置扩展目标链。
@@ -175,6 +191,9 @@ func (e *Engine) appendFailover(dec *Decision, s config.Settings, format, alias 
 	}
 
 	if s.Failover.Mode == "same_name" {
+		if primary.Model == "" {
+			return
+		}
 		provs := append([]config.Provider(nil), e.mgr.Cfg().Providers...)
 		sort.SliceStable(provs, func(i, j int) bool {
 			if provs[i].Priority != provs[j].Priority {
@@ -211,7 +230,7 @@ func (e *Engine) appendFailover(dec *Decision, s config.Settings, format, alias 
 		if len(dec.Chain) >= max {
 			break
 		}
-		if tt, ok := e.resolve(t, alias); ok {
+		if tt, ok := e.resolve(t, alias, format); ok {
 			add(tt)
 		}
 	}

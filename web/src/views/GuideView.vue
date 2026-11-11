@@ -1,6 +1,7 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
 import { api } from '../api';
+import { toast } from '../toast';
 import IconCopy from '~icons/lucide/copy';
 import IconCheck from '~icons/lucide/check';
 
@@ -22,14 +23,18 @@ export default defineComponent({
         this.routerKey = c.router_key;
         this.port = c.port;
       })
-      .catch(() => undefined);
+      .catch((e) => toast('error', e.message));
   },
   methods: {
     copy(text: string, tag: string): void {
+      if (!text) {
+        toast('error', '没有可复制的内容');
+        return;
+      }
       navigator.clipboard.writeText(text).then(() => {
         this.copied = tag;
         setTimeout(() => { this.copied = ''; }, 1500);
-      });
+      }).catch(() => toast('error', '复制失败, 请手动选择文本'));
     },
   },
 });

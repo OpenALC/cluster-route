@@ -85,7 +85,7 @@ func (c *CrApp) watchMinimise() {
 				`try{sessionStorage.setItem('__cr_restore', location.hash)}catch(e){};`+
 					`setTimeout(function(){window.location.replace('about:blank')},0)`)
 		} else if !minimised && wasMin {
-			wruntime.WindowReload(c.ctx)
+			wruntime.WindowReloadApp(c.ctx)
 		}
 		wasMin = minimised
 	}
@@ -112,11 +112,19 @@ func main() {
 	// 资产服务器的回落 Handler 挂我们的管理 API + 代理:
 	// 前端在桌面模式下使用同源相对路径请求 /admin/*, 不依赖绑定注入, 彻底避免 404。
 	lateBoundHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline := time.Now().Add(5 * time.Second)
+		for crApp.inner == nil && time.Now().Before(deadline) {
+			if r.Context().Err() != nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		if crApp.inner != nil {
 			crApp.inner.Mux.ServeHTTP(w, r)
 			return
 		}
-		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "服务正在启动, 请重试", http.StatusServiceUnavailable)
 	})
 	err := wails.Run(&options.App{
 		Title:     "Cluster Route",

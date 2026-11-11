@@ -33,6 +33,7 @@ type Deps struct {
 	WebFS      fs.FS  // 内嵌 UI (web/dist)
 	LogFile    string // 管理 API 4xx 诊断日志(空则不记录)
 	Version    string
+	ListenPort int // 实际监听端口; 0 表示未覆盖, 连接信息回落到配置端口
 }
 
 // Router 构建完整 HTTP 路由(代理 + 管理 + 静态)。
@@ -145,7 +146,6 @@ func (h *handlers) serveAdmin() http.Handler {
 
 	mux.HandleFunc("GET /admin/overview", h.overview)
 	mux.HandleFunc("GET /admin/series", h.series)
-	mux.HandleFunc("GET /admin/group", h.group)
 	mux.HandleFunc("GET /admin/requests", h.listRequests)
 
 	mux.HandleFunc("GET /admin/providers", h.listProviders)
@@ -172,6 +172,7 @@ func (h *handlers) serveAdmin() http.Handler {
 	mux.HandleFunc("GET /admin/sessions/{key}/snapshots", h.listSnapshots)
 	mux.HandleFunc("DELETE /admin/sessions/{key}", h.deleteSession)
 	mux.HandleFunc("GET /admin/snapshots/{id}", h.getSnapshot)
+	mux.HandleFunc("DELETE /admin/snapshots/{id}", h.deleteSnapshot)
 	return mux
 }
 

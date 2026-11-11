@@ -2,7 +2,7 @@
 import { defineComponent } from 'vue';
 import { api, SessionRow, SnapshotContent, SnapshotRow } from '../api';
 import { toast, confirmDialog } from '../toast';
-import { fmtTime, fmtBytes, blockText } from '../format';
+import { fmtTime, fmtBytes, blockText, systemText } from '../format';
 import Modal from '../components/Modal.vue';
 import IconTrash from '~icons/lucide/trash-2';
 import IconFolder from '~icons/lucide/folder';
@@ -25,7 +25,10 @@ export default defineComponent({
       openKey: '',
       snaps: [] as SnapshotRow[],
       viewSnap: null as SnapshotContent | null,
+      viewSnapId: 0,
       viewTitle: '',
+      visibleCount: 40,
+      systemOpen: false,
     };
   },
   computed: {
@@ -46,6 +49,7 @@ export default defineComponent({
     fmtTime(ts: number): string { return fmtTime(ts); },
     fmtBytes(n: number): string { return fmtBytes(n); },
     blockText(content: unknown): string { return blockText(content); },
+    systemText(system: unknown): string { return systemText(system); },
     load(): void {
       this.loading = true;
       api.sessions().then((s) => { this.sessions = s || []; }).catch((e) => toast('error', e.message)).finally(() => { this.loading = false; });
@@ -54,17 +58,30 @@ export default defineComponent({
       this.collapsed[project] = !this.collapsed[project];
     },
     openSession(s: SessionRow): void {
-      this.openKey = s.key;
-      api.snapshots(s.key).then((list) => {
+      const key = s.key;
+      this.openKey = key;
+      this.snaps = [];
+      this.viewSnap = null;
+      this.viewSnapId = 0;
+      this.viewTitle = '';
+      api.snapshots(key).then((list) => {
+        if (this.openKey !== key) return;
         this.snaps = list || [];
         if (this.snaps.length) this.viewSnapshot(this.snaps[0]);
-      }).catch((e) => toast('error', e.message));
+        else this.viewSnap = null;
+      }).catch((e) => { if (this.openKey === key) toast('error', e.message); });
     },
     viewSnapshot(row: SnapshotRow): void {
-      api.snapshotContent(row.id).then((c) => {
+      const key = this.openKey;
+      const id = row.id;
+      api.snapshotContent(id).then((c) => {
+        if (this.openKey !== key) return;
         this.viewSnap = c;
+        this.viewSnapId = id;
+        this.visibleCount = 40;
+        this.systemOpen = false;
         this.viewTitle = `${fmtTime(row.ts)} · ${row.model || ''} · ${row.msg_count} 条消息`;
-      }).catch((e) => toast('error', e.message));
+      }).catch((e) => { if (this.openKey === key) toast('error', e.message); });
     },
     async removeSession(s: SessionRow): Promise<void> {
       const okGo = await confirmDialog(`删除会话「${s.title.slice(0, 30)}」及其全部快照?`, '删除会话', '删除');
@@ -76,9 +93,19 @@ export default defineComponent({
         this.load();
       } catch (e) { toast('error', (e as Error).message); }
     },
+    shownMessages() {
+      const msgs = this.viewSnap?.messages || [];
+      return msgs.slice(Math.max(0, msgs.length - this.visibleCount));
+    },
+    hiddenCount(): number {
+      const n = this.viewSnap?.messages?.length || 0;
+      return Math.max(0, n - this.visibleCount);
+    },
     exportSnapshot(): void {
       if (!this.viewSnap) return;
-      const text = (this.viewSnap.messages || [])
+      const sys = systemText(this.viewSnap.system);
+      const head = sys ? `## system\n\n${sys}\n\n---\n\n` : '';
+      const text = head + (this.viewSnap.messages || [])
         .map((m) => {
           const role = String(m.role ?? '?');
           return `## ${role}\n\n${blockText(m.content)}`;
@@ -90,6 +117,19 @@ export default defineComponent({
       a.download = `context-${this.openKey.slice(0, 8)}.md`;
       a.click();
       URL.revokeObjectURL(a.href);
+    },
+    async removeSnapshot(): Promise<void> {
+      if (!this.viewSnapId) return;
+      const okGo = await confirmDialog('删除这一份快照? 同会话的其他快照会保留。', '删除快照', '删除');
+      if (!okGo) return;
+      const id = this.viewSnapId;
+      try {
+        await api.deleteSnapshot(id);
+        this.snaps = this.snaps.filter((s) => s.id !== id);
+        toast('success', '快照已删除');
+        if (this.snaps.length) this.viewSnapshot(this.snaps[0]);
+        else { this.viewSnap = null; this.viewSnapId = 0; this.load(); }
+      } catch (e) { toast('error', (e as Error).message); }
     },
     roleBadge(role: string): string {
       if (role === 'user') return 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300';
@@ -143,14 +183,22 @@ export default defineComponent({
             <button
               v-for="row in snaps" :key="row.id"
               class="badge whitespace-nowrap ring-1 transition"
-              :class="viewTitle.includes(fmtTime(row.ts)) ? 'bg-sky-600 text-white ring-sky-600' : 'bg-white text-slate-500 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700'"
+              :class="viewSnapId === row.id ? 'bg-sky-600 text-white ring-sky-600' : 'bg-white text-slate-500 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700'"
               @click="viewSnapshot(row)"
             >{{ fmtTime(row.ts) }}</button>
           </div>
-          <button class="btn-ghost !py-1 text-xs" @click="exportSnapshot"><IconDownload class="h-3.5 w-3.5" /> 导出 MD</button>
+          <div class="flex gap-1">
+            <button class="btn-ghost !py-1 text-xs" @click="exportSnapshot"><IconDownload class="h-3.5 w-3.5" /> 导出 MD</button>
+            <button class="btn-danger !py-1 text-xs" @click="removeSnapshot"><IconTrash class="h-3.5 w-3.5" /> 删除此快照</button>
+          </div>
         </div>
+        <details v-if="systemText(viewSnap.system)" class="mb-3 rounded-xl bg-amber-50 p-3 dark:bg-amber-950/30" :open="systemOpen" @toggle="systemOpen = ($event.target as HTMLDetailsElement).open">
+          <summary class="cursor-pointer text-xs font-medium text-amber-700 dark:text-amber-300">system 提示词</summary>
+          <pre class="mt-2 whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-slate-600 dark:text-slate-300">{{ systemText(viewSnap.system) }}</pre>
+        </details>
         <div class="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
-          <div v-for="(m, i) in viewSnap.messages" :key="i" class="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/60">
+          <button v-if="hiddenCount() > 0" class="btn-ghost w-full text-xs" @click="visibleCount += 40">加载更早的 {{ hiddenCount() }} 条</button>
+          <div v-for="(m, i) in shownMessages()" :key="i" class="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/60">
             <div class="mb-1.5 flex items-center gap-2">
               <span class="badge" :class="roleBadge(String(m.role ?? 'system'))">{{ String(m.role ?? 'system') }}</span>
             </div>

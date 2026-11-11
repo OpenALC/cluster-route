@@ -63,15 +63,24 @@ func Extract(body []byte, format, mainMarker string) BodyInfo {
 		}
 	}
 
+	var fullSystem string
 	if format == "anthropic" {
-		info.SystemText = anthropicSystem(root)
+		fullSystem = anthropicSystem(root)
 		info.FirstUser = firstUserText(msgsOf(root))
 	} else {
-		info.SystemText = openaiSystemText(root)
+		fullSystem = openaiSystemText(root)
 		info.FirstUser = openaiFirstUser(root)
 	}
-	info.SystemText = truncateRunes(info.SystemText, systemScanCap)
 	info.FirstUser = truncateRunes(info.FirstUser, firstUserCap)
+	// 子 agent 标记可能不在 system 开头。先对全文判定, 再截断留给展示/项目提取。
+	mainMarker = strings.TrimSpace(mainMarker)
+	if mainMarker != "" {
+		info.IsSubagent = fullSystem != "" && !strings.Contains(fullSystem, mainMarker)
+	}
+	if m := projectRe.FindStringSubmatch(fullSystem); m != nil {
+		info.Project = strings.TrimSpace(m[1])
+	}
+	info.SystemText = truncateRunes(fullSystem, systemScanCap)
 
 	if raw, ok := root["metadata"]; ok {
 		var meta struct {
@@ -82,13 +91,6 @@ func Extract(body []byte, format, mainMarker string) BodyInfo {
 				info.SessionKey = strings.ToLower(m[1])
 			}
 		}
-	}
-	if m := projectRe.FindStringSubmatch(info.SystemText); m != nil {
-		info.Project = strings.TrimSpace(m[1])
-	}
-	mainMarker = strings.TrimSpace(mainMarker)
-	if mainMarker != "" {
-		info.IsSubagent = info.SystemText != "" && !strings.Contains(info.SystemText, mainMarker)
 	}
 	return info
 }
@@ -135,9 +137,6 @@ func anthropicSystem(root map[string]json.RawMessage) string {
 	if json.Unmarshal(raw, &blocks) == nil {
 		var sb strings.Builder
 		for _, b := range blocks {
-			if sb.Len() > systemScanCap {
-				break
-			}
 			sb.WriteString(b.Text)
 			sb.WriteByte('\n')
 		}

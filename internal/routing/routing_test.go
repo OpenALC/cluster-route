@@ -318,8 +318,8 @@ func TestDecideNoTarget(t *testing.T) {
 		id := addProvider(t, mgr, "def", "sk-def")
 		setSettings(t, mgr, func(s *config.Settings) { s.DefaultProviderID = id })
 		dec := e.Decide("", "anthropic", &rewrite.BodyInfo{Root: true})
-		if len(dec.Chain) != 0 {
-			t.Fatalf("空别名且路由无模型名时应无目标, got %v", chainIDs(dec))
+		if len(dec.Chain) != 1 || dec.Chain[0].Provider.ID != id || dec.Chain[0].Model != "" {
+			t.Fatalf("空模型应透传到默认供应商, got %v", chainIDs(dec))
 		}
 	})
 }

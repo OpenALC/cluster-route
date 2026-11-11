@@ -51,21 +51,36 @@ export const channelBadge: Record<string, string> = {
   default: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
 };
 
-/** 提取消息块的纯文本预览 */
+/** 提取消息块的纯文本, 保留工具入参/结果, 供预览和导出复原上下文。 */
 export function blockText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .map((b) => {
-        const o = b as Record<string, unknown>;
-        if (typeof o.text === 'string') return o.text;
-        if (o.type === 'tool_use') return `[工具调用 ${String(o.name ?? '')}]`;
-        if (o.type === 'tool_result') return '[工具结果]';
-        return '';
-      })
+      .map((b) => blockPart(b as Record<string, unknown>))
       .filter(Boolean)
       .join('\n');
   }
-  if (content && typeof content === 'object') return JSON.stringify(content).slice(0, 200);
+  if (content && typeof content === 'object') return JSON.stringify(content);
   return '';
+}
+
+function blockPart(o: Record<string, unknown>): string {
+  if (typeof o.text === 'string' && (o.type == null || o.type === 'text')) return o.text;
+  if (o.type === 'tool_use') {
+    const input = o.input == null ? '' : JSON.stringify(o.input, null, 2);
+    return `[工具调用 ${String(o.name ?? '')}]${input ? '\n' + input : ''}`;
+  }
+  if (o.type === 'tool_result') {
+    const body = typeof o.content === 'string' ? o.content : blockText(o.content);
+    return `[工具结果]${body ? '\n' + body : ''}`;
+  }
+  if (o.type === 'image' || o.type === 'image_url') return '[图片]';
+  if (typeof o.text === 'string') return o.text;
+  return '';
+}
+
+export function systemText(system: unknown): string {
+  if (system == null) return '';
+  if (typeof system === 'string') return system;
+  return blockText(system);
 }
