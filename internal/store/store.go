@@ -333,7 +333,7 @@ func (s *Store) TotalsByRange(startTs int64, channel string) (Totals, error) {
 }
 
 // GroupBy 按字段分组聚合(field: provider_name|model|channel)。
-func (s *Store) GroupBy(startTs int64, field string) ([]GroupAgg, error) {
+func (s *Store) GroupBy(startTs int64, field, channel string) ([]GroupAgg, error) {
 	col := map[string]string{
 		"provider_name": "provider_name",
 		"model":         "model",
@@ -346,8 +346,14 @@ func (s *Store) GroupBy(startTs int64, field string) ([]GroupAgg, error) {
 		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0),
 		COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost),0),
 		COALESCE(SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END),0)
-		FROM requests WHERE ts >= ? GROUP BY %s ORDER BY cost DESC`, col, col)
-	rows, err := s.db.Query(q, startTs)
+		FROM requests WHERE ts >= ?`, col)
+	args := []any{startTs}
+	if channel != "" {
+		q += " AND channel = ?"
+		args = append(args, channel)
+	}
+	q += fmt.Sprintf(" GROUP BY %s ORDER BY SUM(cost) DESC", col)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -366,6 +372,9 @@ func (s *Store) GroupBy(startTs int64, field string) ([]GroupAgg, error) {
 
 // Timeseries 按 bucketSec 整除分桶的时间序列。
 func (s *Store) Timeseries(startTs, bucketSec int64) ([]Point, error) {
+	if bucketSec == 86400 {
+		return s.timeseriesLocalDay(startTs)
+	}
 	rows, err := s.db.Query(`SELECT (ts/?)*? AS b, COUNT(*), COALESCE(SUM(input_tokens),0),
 		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0),
 		COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost),0)
@@ -382,6 +391,77 @@ func (s *Store) Timeseries(startTs, bucketSec int64) ([]Point, error) {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// timeseriesLocalDay 按本地日历天分桶。(ts/86400)*86400 是 UTC 零点,
+// 与 daily_stats 的本地天不一致, 曲线会把 00:00–08:00 的请求算到前一天。
+func (s *Store) timeseriesLocalDay(startTs int64) ([]Point, error) {
+	_, off := time.Now().Zone()
+	rows, err := s.db.Query(`SELECT ((ts + ?)/86400)*86400 - ? AS b, COUNT(*), COALESCE(SUM(input_tokens),0),
+		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0),
+		COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost),0)
+		FROM requests WHERE ts >= ? GROUP BY b ORDER BY b`, off, off, startTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Point
+	for rows.Next() {
+		var p Point
+		if err := rows.Scan(&p.Bucket, &p.Requests, &p.Input, &p.CacheRead, &p.CacheCreate,
+			&p.Output, &p.Cost); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// TotalsDaily 从永久日聚合汇总。startTs<=0 表示全部。errors 不在日表里, 恒为 0。
+func (s *Store) TotalsDaily(startTs int64) (Totals, error) {
+	q := `SELECT COALESCE(SUM(requests),0), COALESCE(SUM(input_tokens),0),
+		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0),
+		COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost),0) FROM daily_stats`
+	var args []any
+	if startTs > 0 {
+		q += ` WHERE day >= ?`
+		args = append(args, time.Unix(startTs, 0).Format("2006-01-02"))
+	}
+	var t Totals
+	err := s.db.QueryRow(q, args...).Scan(&t.Requests, &t.Input, &t.CacheRead, &t.CacheCreate, &t.Output, &t.Cost)
+	return t, err
+}
+
+// GroupDaily 按 provider_id 或 model 聚合日表。ORDER BY 用 SUM(cost), 不是任意一行的 cost。
+func (s *Store) GroupDaily(field string, startTs int64) ([]GroupAgg, error) {
+	col := map[string]string{"provider_id": "provider_id", "model": "model"}[field]
+	if col == "" {
+		return nil, fmt.Errorf("bad daily group field %q", field)
+	}
+	q := fmt.Sprintf(`SELECT %s, COALESCE(SUM(requests),0), COALESCE(SUM(input_tokens),0),
+		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0),
+		COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost),0)
+		FROM daily_stats`, col)
+	var args []any
+	if startTs > 0 {
+		q += ` WHERE day >= ?`
+		args = append(args, time.Unix(startTs, 0).Format("2006-01-02"))
+	}
+	q += fmt.Sprintf(" GROUP BY %s ORDER BY SUM(cost) DESC", col)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GroupAgg
+	for rows.Next() {
+		var g GroupAgg
+		if err := rows.Scan(&g.Key, &g.Requests, &g.Input, &g.CacheRead, &g.CacheCreate, &g.Output, &g.Cost); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
 	}
 	return out, rows.Err()
 }
@@ -571,18 +651,40 @@ func (s *Store) PruneSessionSnapshots(key string, keep int) ([]string, error) {
 		var p string
 		if err := rows.Scan(&id, &p); err == nil {
 			ids = append(ids, id)
-			if p != "" {
-				paths = append(paths, p)
-			}
+			paths = append(paths, p)
 		}
 	}
 	rows.Close()
-	for _, id := range ids {
+	var deleted []string
+	for i, id := range ids {
 		if _, err := s.db.Exec(`DELETE FROM snapshots WHERE id = ?`, id); err != nil {
-			return paths, err
+			return deleted, err
+		}
+		if i < len(paths) && paths[i] != "" {
+			deleted = append(deleted, paths[i])
 		}
 	}
-	return paths, nil
+	return deleted, nil
+}
+
+// MaxSnapshotSeq 该会话已分配的最大 seq。没有快照时返回 0。
+func (s *Store) MaxSnapshotSeq(key string) (int64, error) {
+	var n sql.NullInt64
+	err := s.db.QueryRow(`SELECT MAX(seq) FROM snapshots WHERE session_key = ?`, key).Scan(&n)
+	return n.Int64, err
+}
+
+// DeleteSessionIfEmpty 快照已删光时清掉会话记录, 避免 LRU 留下孤儿会话。
+func (s *Store) DeleteSessionIfEmpty(key string) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM snapshots WHERE session_key = ?`, key).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE key = ?`, key)
+	return err
 }
 
 // SnapshotSizeSum 全部快照占用字节数。

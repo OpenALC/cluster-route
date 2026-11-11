@@ -293,18 +293,71 @@ func (m *Manager) saveLocked() error {
 	return os.Rename(tmp, m.path)
 }
 
-// Cfg 返回配置快照(值拷贝; 切片为浅拷贝, 调用方不得修改)。
+// Cfg 返回配置快照。切片深拷贝, 调用方持有的快照不会被后续原地改写污染。
 func (m *Manager) Cfg() Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.cfg
+	return cloneConfig(m.cfg)
 }
 
 // Settings 返回设置快照。
 func (m *Manager) Settings() Settings {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.cfg.Settings
+	return cloneSettings(m.cfg.Settings)
+}
+
+func cloneConfig(c Config) Config {
+	c.Providers = cloneProviders(c.Providers)
+	c.Routes = cloneRoutes(c.Routes)
+	c.Settings = cloneSettings(c.Settings)
+	return c
+}
+
+func cloneProviders(in []Provider) []Provider {
+	if in == nil {
+		return nil
+	}
+	out := make([]Provider, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].FetchedModels = cloneStrings(in[i].FetchedModels)
+	}
+	return out
+}
+
+func cloneSettings(s Settings) Settings {
+	s.Lightweight.Targets = cloneTargets(s.Lightweight.Targets)
+	s.Lightweight.Aliases = cloneStrings(s.Lightweight.Aliases)
+	s.Failover.Targets = cloneTargets(s.Failover.Targets)
+	return s
+}
+
+func cloneTargets(in []Target) []Target {
+	if in == nil {
+		return nil
+	}
+	out := make([]Target, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneRoutes(in []Route) []Route {
+	if in == nil {
+		return nil
+	}
+	out := make([]Route, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneStrings(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }
 
 // RouterKey 返回路由器自签密钥明文。
@@ -389,7 +442,7 @@ func (m *Manager) UpsertProvider(p Provider, plainKey string) error {
 func (m *Manager) DeleteProvider(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := m.cfg.Providers[:0]
+	out := make([]Provider, 0, len(m.cfg.Providers))
 	for _, p := range m.cfg.Providers {
 		if p.ID != id {
 			out = append(out, p)
@@ -511,7 +564,7 @@ func (m *Manager) findProviderLocked(id string) *Provider {
 }
 
 func dropTargets(ts []Target, pid string) []Target {
-	out := ts[:0]
+	out := make([]Target, 0, len(ts))
 	for _, t := range ts {
 		if t.ProviderID != pid {
 			out = append(out, t)
@@ -521,7 +574,7 @@ func dropTargets(ts []Target, pid string) []Target {
 }
 
 func filterRoutes(rs []Route, keep func(Route) bool) []Route {
-	out := rs[:0]
+	out := make([]Route, 0, len(rs))
 	for _, r := range rs {
 		if keep(r) {
 			out = append(out, r)

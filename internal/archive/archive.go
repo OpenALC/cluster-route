@@ -38,6 +38,8 @@ type Service struct {
 
 	mu      sync.Mutex
 	lastSeq map[string]int64 // 会话键 -> 已分配的最大 seq(保证严格递增)
+	dropped int64
+	capMu   sync.Mutex // enforceCap 会被 janitor 与 ticker 同时调用
 }
 
 var safeKeyRe = regexp.MustCompile(`[^0-9a-zA-Z_-]`)
@@ -80,7 +82,25 @@ func (s *Service) Submit(snap Snapshot) {
 	select {
 	case s.ch <- snap:
 	default:
+		s.noteDrop()
 	}
+}
+
+func (s *Service) noteDrop() {
+	s.mu.Lock()
+	s.dropped++
+	n := s.dropped
+	s.mu.Unlock()
+	if n == 1 || n%50 == 0 {
+		log.Printf("[archive] 警告: 归档队列已满, 已累计丢弃 %d 份快照", n)
+	}
+}
+
+// Dropped 因队列满被丢弃的快照数。
+func (s *Service) Dropped() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dropped
 }
 
 // Run 后台写盘循环。
@@ -118,7 +138,13 @@ func (s *Service) write(snap Snapshot) {
 		seq = time.Now().UnixMilli()
 	}
 	s.mu.Lock()
-	if last := s.lastSeq[key]; seq <= last {
+	last, seen := s.lastSeq[key]
+	if !seen {
+		if max, err := s.st.MaxSnapshotSeq(snap.Key); err == nil {
+			last = max
+		}
+	}
+	if seq <= last {
 		seq = last + 1
 	}
 	s.lastSeq[key] = seq
@@ -136,6 +162,7 @@ func (s *Service) write(snap Snapshot) {
 		MsgCount: snap.MsgCount, Project: snap.Project,
 	}
 	if _, err := s.st.InsertSnapshot(row); err != nil {
+		_ = os.Remove(abs)
 		log.Printf("[archive] 快照元数据写入失败: %v", err)
 		return
 	}
@@ -157,13 +184,17 @@ func (s *Service) write(snap Snapshot) {
 	if keep <= 0 {
 		keep = 3
 	}
-	if paths, err := s.st.PruneSessionSnapshots(snap.Key, keep); err == nil {
-		removeFiles(s.dir, paths)
+	paths, err := s.st.PruneSessionSnapshots(snap.Key, keep)
+	removeFiles(s.dir, paths)
+	if err != nil {
+		log.Printf("[archive] 裁剪快照元数据失败: %v", err)
 	}
 }
 
 // enforceCap 全局容量 LRU: 超限时从最旧快照开始删除。
 func (s *Service) enforceCap() {
+	s.capMu.Lock()
+	defer s.capMu.Unlock()
 	cfg := s.mgr.Settings().Archive
 	capBytes := int64(cfg.GlobalCapGB) << 30
 	if capBytes <= 0 {
@@ -187,6 +218,9 @@ func (s *Service) enforceCap() {
 			return
 		}
 		removeFiles(s.dir, []string{p})
+		if err := s.st.DeleteSessionIfEmpty(old[0].SessionKy); err != nil {
+			log.Printf("[archive] 清理空会话失败: %v", err)
+		}
 	}
 }
 
@@ -211,9 +245,24 @@ type SnapshotContent struct {
 
 // ReadSnapshot 读取并解析快照文件。
 func ReadSnapshot(absPath string) (*SnapshotContent, error) {
+	fi, err := os.Stat(absPath)
+	if err != nil {
+		return nil, err
+	}
+	const maxSnapshot = 20 << 20
+	if fi.Size() > maxSnapshot {
+		return nil, fmt.Errorf("快照超过 %dMB", maxSnapshot>>20)
+	}
 	b, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, err
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(b, &probe); err != nil {
+		return nil, fmt.Errorf("快照解析失败: %w", err)
+	}
+	if _, ok := probe["messages"]; !ok {
+		return nil, fmt.Errorf("快照缺少 messages")
 	}
 	var root struct {
 		System   json.RawMessage   `json:"system"`
