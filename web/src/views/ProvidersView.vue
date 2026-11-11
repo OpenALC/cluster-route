@@ -139,14 +139,22 @@ export default defineComponent({
       const m = this.newModel.trim();
       if (!m) return;
       const pool = [...(p.fetched_models || []), m];
-      this.newModel = '';
-      await api.setProviderModels(p.id, pool);
-      this.load();
+      try {
+        await api.setProviderModels(p.id, pool);
+        this.newModel = '';
+        this.load();
+      } catch (e) {
+        toast('error', (e as Error).message);
+      }
     },
     async removeModel(p: Provider, m: string): Promise<void> {
       const pool = (p.fetched_models || []).filter((x) => x !== m);
-      await api.setProviderModels(p.id, pool);
-      this.load();
+      try {
+        await api.setProviderModels(p.id, pool);
+        this.load();
+      } catch (e) {
+        toast('error', (e as Error).message);
+      }
     },
     testBadge(p: Provider): { cls: string; text: string } {
       const t: TestResult | null | undefined = p.last_test;
@@ -185,6 +193,7 @@ export default defineComponent({
           <span class="badge" :class="p.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'">
             {{ p.enabled ? '启用' : '停用' }}
           </span>
+          <span v-if="!p.has_key" class="badge bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">缺少密钥</span>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 text-sm font-semibold">
               {{ p.name }}

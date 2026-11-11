@@ -156,10 +156,10 @@ export default defineComponent({
             <span class="text-[11px] text-slate-400">$/百万 token · 可选: 峰谷时段之外按此计费, 未填则峰谷外不计费</span>
           </div>
           <div class="grid grid-cols-4 gap-2">
-            <div><label class="label">输入</label><input v-model.number="form.input" class="input text-xs" type="number" step="any" /></div>
-            <div><label class="label">输出</label><input v-model.number="form.output" class="input text-xs" type="number" step="any" /></div>
-            <div><label class="label">缓存读</label><input v-model.number="form.cache_read" class="input text-xs" type="number" step="any" /></div>
-            <div><label class="label">缓存写</label><input v-model.number="form.cache_creation" class="input text-xs" type="number" step="any" /></div>
+            <div><label class="label">输入</label><input v-model.number="form.input" class="input text-xs" type="number" min="0" step="any" /></div>
+            <div><label class="label">输出</label><input v-model.number="form.output" class="input text-xs" type="number" min="0" step="any" /></div>
+            <div><label class="label">缓存读</label><input v-model.number="form.cache_read" class="input text-xs" type="number" min="0" step="any" /></div>
+            <div><label class="label">缓存写</label><input v-model.number="form.cache_creation" class="input text-xs" type="number" min="0" step="any" /></div>
           </div>
         </div>
 
@@ -196,15 +196,15 @@ export default defineComponent({
               </label>
             </div>
             <div v-if="tier.mode === 'absolute'" class="mt-2 grid grid-cols-4 gap-2">
-              <div><label class="label">输入</label><input v-model.number="tier.input" class="input text-xs" type="number" step="any" /></div>
-              <div><label class="label">输出</label><input v-model.number="tier.output" class="input text-xs" type="number" step="any" /></div>
-              <div><label class="label">缓存读</label><input v-model.number="tier.cache_read" class="input text-xs" type="number" step="any" /></div>
-              <div><label class="label">缓存写</label><input v-model.number="tier.cache_creation" class="input text-xs" type="number" step="any" /></div>
+              <div><label class="label">输入</label><input v-model.number="tier.input" class="input text-xs" type="number" min="0" step="any" /></div>
+              <div><label class="label">输出</label><input v-model.number="tier.output" class="input text-xs" type="number" min="0" step="any" /></div>
+              <div><label class="label">缓存读</label><input v-model.number="tier.cache_read" class="input text-xs" type="number" min="0" step="any" /></div>
+              <div><label class="label">缓存写</label><input v-model.number="tier.cache_creation" class="input text-xs" type="number" min="0" step="any" /></div>
             </div>
             <div v-else class="mt-2 flex items-center gap-3">
               <label class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                 倍率
-                <input v-model.number="tier.rate" class="input !w-24 text-xs" type="number" step="any" min="0" />
+                <input v-model.number="tier.rate" class="input !w-24 text-xs" type="number" min="0" step="any" />
               </label>
               <span class="text-[11px]" :class="flatSet() ? 'text-slate-400' : 'text-rose-500'">
                 该档价格 = 平价 × 倍率<span v-if="!flatSet()">, 需先填写平价</span>

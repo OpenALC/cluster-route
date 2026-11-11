@@ -18,6 +18,7 @@ export default defineComponent({
       status: '',
       model: '',
       loading: false,
+      more: false,
       expanded: 0,
       rangeOptions: [
         { value: '24h', label: '24小时' },
@@ -45,7 +46,7 @@ export default defineComponent({
     },
   },
   mounted() {
-    api.providers().then((p) => { this.providers = p || []; }).catch(() => undefined);
+    api.providers().then((p) => { this.providers = p || []; }).catch((e) => toast('error', e.message));
     this.load();
   },
   methods: {
@@ -54,14 +55,19 @@ export default defineComponent({
     fmtTime(ts: number): string { return fmtTime(ts); },
     chLabel(key: string): string { return channelLabels[key] || key; },
     chBadge(key: string): string { return channelBadge[key] || ''; },
-    load(): void {
+    load(append = false): void {
       this.loading = true;
+      const offset = append ? String(this.rows.length) : '0';
       const q = new URLSearchParams({
-        range: this.range, limit: '200',
+        range: this.range, limit: '200', offset,
         channel: this.channel, provider: this.provider, status: this.status, model: this.model,
       });
       api.requests(q.toString())
-        .then((r) => { this.rows = r || []; })
+        .then((r) => {
+          const batch = r || [];
+          this.rows = append ? this.rows.concat(batch) : batch;
+          this.more = batch.length === 200;
+        })
         .catch((e) => toast('error', e.message))
         .finally(() => { this.loading = false; });
     },
@@ -80,12 +86,12 @@ export default defineComponent({
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-xl font-bold">日志</h1>
       <div class="flex flex-wrap items-center gap-2">
-        <Select v-model="range" :options="rangeOptions" width="w-28" compact @change="load" />
-        <Select v-model="channel" :options="channelOptions" width="w-28" compact @change="load" />
-        <Select v-model="provider" :options="providerOptions" width="w-32" compact @change="load" />
-        <Select v-model="status" :options="statusOptions" width="w-24" compact @change="load" />
-        <input v-model="model" class="input !w-36 !py-1.5 text-xs" placeholder="模型过滤" @keyup.enter="load" />
-        <button class="btn-ghost !py-1.5 text-xs" @click="load">查询</button>
+        <Select v-model="range" :options="rangeOptions" width="w-28" compact @change="load()" />
+        <Select v-model="channel" :options="channelOptions" width="w-28" compact @change="load()" />
+        <Select v-model="provider" :options="providerOptions" width="w-32" compact @change="load()" />
+        <Select v-model="status" :options="statusOptions" width="w-24" compact @change="load()" />
+        <input v-model="model" class="input !w-36 !py-1.5 text-xs" placeholder="模型过滤" @keyup.enter="load()" />
+        <button class="btn-ghost !py-1.5 text-xs" @click="load()">查询</button>
       </div>
     </div>
 
@@ -146,6 +152,9 @@ export default defineComponent({
           </template>
         </tbody>
       </table>
+      <div v-if="more" class="border-t border-slate-100 p-3 text-center dark:border-slate-800">
+        <button class="btn-ghost" :disabled="loading" @click="load(true)">加载更多</button>
+      </div>
     </div>
   </div>
 </template>

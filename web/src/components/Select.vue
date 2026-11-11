@@ -1,5 +1,10 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
+
+const openSelects = new Set<{ open: boolean }>();
+function closeOtherSelects(self: { open: boolean }): void {
+  openSelects.forEach((s) => { if (s !== self) s.open = false; });
+}
 import IconChevron from '~icons/lucide/chevron-down';
 
 export interface SelectOption {
@@ -30,15 +35,20 @@ export default defineComponent({
     },
   },
   mounted() {
+    openSelects.add(this);
     document.addEventListener('click', this.onDocClick);
     document.addEventListener('keydown', this.onKey);
   },
   beforeUnmount() {
+    openSelects.delete(this);
     document.removeEventListener('click', this.onDocClick);
     document.removeEventListener('keydown', this.onKey);
   },
   methods: {
-    toggle(): void { this.open = !this.open; },
+    toggle(): void {
+      if (!this.open) closeOtherSelects(this);
+      this.open = !this.open;
+    },
     pick(v: string): void {
       this.$emit('update:modelValue', v);
       this.$emit('change', v);

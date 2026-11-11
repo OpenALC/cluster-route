@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router';
 import { theme, toggleTheme } from './theme';
 import { isDesktop, rt } from './wails';
 import { api } from './api';
+import { toast } from './toast';
 import IconSun from '~icons/lucide/sun';
 import IconMoon from '~icons/lucide/moon';
 import IconActivity from '~icons/lucide/activity';
@@ -47,10 +48,13 @@ export default defineComponent({
     // 初始跟随 isDesktop 以避免 Windows 下页头闪现, 随后按平台校正。
     const showTitleBar = ref(isDesktop);
     onMounted(() => {
-      api.version().then((v) => { ver.value = v.version; }).catch(() => undefined);
-      rt()?.Environment()
-        .then((e) => { showTitleBar.value = e.platform === 'windows'; })
-        .catch(() => undefined);
+      api.version().then((v) => { ver.value = v.version; }).catch((e) => toast('error', e.message));
+      const runtime = rt();
+      if (runtime) {
+        runtime.Environment()
+          .then((e) => { showTitleBar.value = e.platform === 'windows'; })
+          .catch((e) => toast('error', e.message));
+      }
     });
     return { theme, toggleTheme, items, isActive, showTitleBar, ver };
   },

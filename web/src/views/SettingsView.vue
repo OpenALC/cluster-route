@@ -16,8 +16,10 @@ export default defineComponent({
     return {
       s: null as Settings | null,
       dropped: 0,
+      archiveDropped: 0,
       saving: false,
       saved: false,
+      loadError: '',
       routerKey: '',
       rotating: false,
       copied: false,
@@ -29,22 +31,25 @@ export default defineComponent({
       ],
     };
   },
-  mounted() {
-    Promise.all([api.settings(), api.overview('all'), api.connection()])
-      .then(([s, ov, c]) => {
-        this.s = s;
-        this.dropped = ov.stats_dropped;
-        this.routerKey = c.router_key;
-      })
-      .catch((e) => toast('error', e.message));
-  },
+  mounted() { this.load(); },
   methods: {
+    load(): void {
+      this.loadError = '';
+      Promise.all([api.settings(), api.overview('all'), api.connection()])
+        .then(([s, ov, c]) => {
+          this.s = s;
+          this.dropped = ov.stats_dropped;
+          this.archiveDropped = ov.archive_dropped || 0;
+          this.routerKey = c.router_key;
+        })
+        .catch((e) => { this.loadError = e.message; toast('error', e.message); });
+    },
     fmtBytes,
     save(): void {
       if (!this.s) return;
       this.saving = true;
       this.saved = false;
-      api.putSettings(this.s)
+      api.putSettings(this.s, 'general')
         .then(() => { this.saved = true; setTimeout(() => { this.saved = false; }, 2000); })
         .catch((e) => toast('error', e.message))
         .finally(() => { this.saving = false; });
@@ -82,6 +87,11 @@ export default defineComponent({
     <div class="mb-5 flex items-center justify-between">
       <h1 class="text-xl font-bold">设置</h1>
       <button v-if="s" class="btn-primary" :disabled="saving" @click="save">{{ saved ? '已保存 ✓' : (saving ? '保存中…' : '保存全部') }}</button>
+    </div>
+
+    <div v-if="loadError && !s" class="card p-4 text-sm">
+      <p class="text-rose-500">{{ loadError }}</p>
+      <button class="btn-ghost mt-2" @click="load">重试</button>
     </div>
 
     <div v-if="s" class="space-y-4">
@@ -151,6 +161,8 @@ export default defineComponent({
         <h2 class="mb-3 text-sm font-semibold">运行状态</h2>
         <div class="text-xs text-slate-500 dark:text-slate-400">
           统计队列累计丢弃: <span class="font-mono" :class="dropped > 0 && 'text-amber-500'">{{ dropped }}</span> 条
+          <span class="mx-2 text-slate-300">·</span>
+          归档队列累计丢弃: <span class="font-mono" :class="archiveDropped > 0 && 'text-amber-500'">{{ archiveDropped }}</span> 份
           (队列满载时为保证转发零阻塞而丢弃统计, 不影响请求)
         </div>
       </div>

@@ -6,7 +6,7 @@ import './styles.css';
 
 declare global {
   interface Window {
-    go?: { main?: { App?: { GetAPIBase: () => Promise<string> } } };
+    go?: { main?: { CrApp?: { GetAPIBase: () => Promise<string> } } };
   }
 }
 
@@ -14,7 +14,7 @@ declare global {
 // 若是从"最小化卸载"恢复, 还原最小化前的页面路由。
 async function boot(): Promise<void> {
   try {
-    const wailsApp = window.go?.main?.App;
+    const wailsApp = window.go?.main?.CrApp;
     if (wailsApp?.GetAPIBase) {
       setApiBase(await wailsApp.GetAPIBase());
     }
